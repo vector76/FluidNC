@@ -269,8 +269,17 @@ static void check_startup_state() {
 
 const uint32_t heapWarnThreshold = 15000;
 
+int32_t get_longest_poll();
+int32_t get_longest_wifi();
+void reset_longest();
+
 uint32_t heapLowWater = UINT_MAX;
 void     protocol_main_loop() {
+    int32_t longest_poll_us = 0;
+    int32_t longest_wifi_us = 0;
+    int32_t decay_timer = getCpuTicks();
+    int32_t decay_ticks = usToCpuTicks(1000000);  // 1 second is 1 million microseconds
+
     check_startup_state();
     start_polling();
 
@@ -324,6 +333,37 @@ void     protocol_main_loop() {
             if (heapLowWater < heapWarnThreshold) {
                 log_warn("Low memory: " << heapLowWater << " bytes");
             }
+        }
+
+        int32_t tmp_longest_poll = get_longest_poll();
+        int32_t tmp_longest_wifi = get_longest_wifi();
+        
+        if (tmp_longest_poll > longest_poll_us) {
+            longest_poll_us = tmp_longest_poll;
+            if (longest_poll_us > 100000) {
+                // only show messages when more than 100 ms
+                log_warn("Longest poll: " << longest_poll_us/1000 << "." << (longest_poll_us/100) % 10 << " ms");
+                longest_poll_us = 0;
+                reset_longest();
+            }
+        }
+
+        if (tmp_longest_wifi > longest_wifi_us) {
+            longest_wifi_us = tmp_longest_wifi;
+            if (longest_wifi_us > 100000) {
+                // only show messages when more than 100 ms
+                log_warn("Longest wifi: " << longest_wifi_us/1000 << "." << (longest_wifi_us/100) % 10 << " ms");
+                longest_wifi_us = 0;
+                reset_longest();
+            }
+        }
+
+        int32_t tnow = getCpuTicks();
+        if (tnow - decay_timer > decay_ticks) {
+            decay_timer = tnow;
+            longest_wifi_us = (longest_wifi_us * 251) / 256;  // decrease by 2% every second to keep generating reports
+            longest_poll_us = (longest_poll_us * 251) / 256;
+            reset_longest();
         }
     }
     return; /* Never reached */

@@ -54,6 +54,8 @@
 
 #include "Driver/fluidnc_gpio.h"
 
+#include "esp32/clk.h"
+
 #include <atomic>
 #include <cstring>
 #include <vector>
@@ -295,6 +297,10 @@ Channel* AllChannels::pollLine(char* line) {
 
 AllChannels allChannels;
 
+// int      esp_clk_cpu_freq(void);
+int32_t longest_poll = 0;
+int32_t longest_wifi = 0;
+
 Channel* pollChannels(char* line) {
     poll_gpios();
     // Throttle polling when we are not ready for a line, thus preventing
@@ -311,10 +317,41 @@ Channel* pollChannels(char* line) {
     }
     counter = 50;
 
-    Channel* retval = allChannels.pollLine(line);
+    uint32_t ticks_per_us = esp_clk_cpu_freq() / 1000000;
 
+    int32_t poll_before = getCpuTicks();
+    Channel* retval = allChannels.pollLine(line);
+    int32_t poll_elapsed = getCpuTicks() - poll_before;
+    int32_t poll_us = (poll_elapsed + ticks_per_us/2)/ticks_per_us;
+    if (poll_us > longest_poll) {
+        longest_poll = poll_us;
+    }
+
+    int32_t restart_before = getCpuTicks();
     WebUI::COMMANDS::handle();      // Handles ESP restart
+    int32_t restart_elapsed = getCpuTicks() - restart_before;
+    int32_t restart_us = (restart_elapsed + ticks_per_us/2)/ticks_per_us;
+
+    int32_t wifi_before = getCpuTicks();
     WebUI::wifi_services.handle();  // OTA, webServer, telnetServer polling
+    int32_t wifi_elapsed = getCpuTicks() - wifi_before;
+    int32_t wifi_us = (wifi_elapsed + ticks_per_us/2)/ticks_per_us;
+    if (wifi_us > longest_wifi) {
+        longest_wifi = wifi_us;
+    }
 
     return retval;
+}
+
+int32_t get_longest_poll() {
+    return longest_poll;
+}
+
+int32_t get_longest_wifi() {
+    return longest_wifi;
+}
+
+void reset_longest() {
+    longest_poll = 0;
+    longest_wifi = 0;
 }
