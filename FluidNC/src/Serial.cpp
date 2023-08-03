@@ -266,6 +266,8 @@ size_t AllChannels::write(const uint8_t* buffer, size_t length) {
     _mutex.unlock();
     return length;
 }
+
+int prevchans = 0;
 Channel* AllChannels::pollLine(char* line) {
     Channel* deadChannel;
     while (xQueueReceive(_killQueue, &deadChannel, 0)) {
@@ -276,6 +278,21 @@ Channel* AllChannels::pollLine(char* line) {
     // To avoid starving other channels when one has a lot
     // of traffic, we poll the other channels before the last
     // one that returned a line.
+
+    int numchans = _channelq.size();
+    if (numchans != prevchans) {
+        if (numchans > 2) {
+            log_info("Channels now " << numchans << ", latest " << _channelq[numchans-1]->name());
+        }
+        else if (numchans == 2) {
+            log_info("Channels now 2: " << _channelq[0]->name() << " and " << _channelq[1]->name());
+        }
+        else if (numchans == 1) {
+            log_info("One Channel: " << _channelq[0]->name());
+        }
+        prevchans = numchans;
+    }
+
     _mutex.lock();
 
     for (auto channel : _channelq) {
