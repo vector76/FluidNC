@@ -76,11 +76,12 @@ class AllChannels : public Channel {
     Channel*     _lastChannel = nullptr;
     xQueueHandle _killQueue;
 
+public:
     static std::mutex _mutex;
 
-public:
     AllChannels() : Channel("all") { _killQueue = xQueueCreate(3, sizeof(Channel*)); }
 
+    Channel* firstChannel() { return _channelq.empty() ? nullptr : _channelq[0]; }
     void kill(Channel* channel);
 
     void registration(Channel* channel);

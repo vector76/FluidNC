@@ -54,7 +54,7 @@
 
 #include "Driver/fluidnc_gpio.h"
 
-#include "esp32/clk.h"
+#include "TicToc.h"
 
 #include <atomic>
 #include <cstring>
@@ -196,73 +196,113 @@ void AllChannels::kill(Channel* channel) {
     xQueueSend(_killQueue, &channel, 0);
 }
 
+const char *lockfun = "";
+const char *taskname = "";
+const char *channame = "";
+
 void AllChannels::registration(Channel* channel) {
     _mutex.lock();
+    lockfun = "registration";
+    taskname = pcTaskGetName(NULL);
     _channelq.push_back(channel);
+    lockfun = "";
+    taskname = "";
     _mutex.unlock();
 }
 void AllChannels::deregistration(Channel* channel) {
     _mutex.lock();
+    lockfun = "deregistration";
+    taskname = pcTaskGetName(NULL);
     if (channel == _lastChannel) {
         _lastChannel = nullptr;
     }
     _channelq.erase(std::remove(_channelq.begin(), _channelq.end(), channel), _channelq.end());
+    lockfun = "";
+    taskname = "";
     _mutex.unlock();
 }
 
 void AllChannels::listChannels(Channel& out) {
     _mutex.lock();
+    lockfun = "listChannels";
+    taskname = pcTaskGetName(NULL);
     std::string retval;
     for (auto channel : _channelq) {
         log_to(out, channel->name());
     }
+    lockfun = "";
+    taskname = "";
     _mutex.unlock();
 }
 
 void AllChannels::flushRx() {
     _mutex.lock();
+    lockfun = "flushRx";
+    taskname = pcTaskGetName(NULL);
     for (auto channel : _channelq) {
         channel->flushRx();
     }
+    lockfun = "";
+    taskname = "";
     _mutex.unlock();
 }
 
 size_t AllChannels::write(uint8_t data) {
     _mutex.lock();
+    lockfun = "write";
+    taskname = pcTaskGetName(NULL);
     for (auto channel : _channelq) {
         channel->write(data);
     }
+    lockfun = "";
+    taskname = "";
     _mutex.unlock();
     return 1;
 }
 void AllChannels::notifyWco(void) {
     _mutex.lock();
+    lockfun = "notifyWco";
+    taskname = pcTaskGetName(NULL);
     for (auto channel : _channelq) {
         channel->notifyWco();
     }
+    lockfun = "";
+    taskname = "";
     _mutex.unlock();
 }
 void AllChannels::notifyNgc(CoordIndex coord) {
     _mutex.lock();
+    lockfun = "notifyNgc";
+    taskname = pcTaskGetName(NULL);
     for (auto channel : _channelq) {
         channel->notifyNgc(coord);
     }
+    lockfun = "";
+    taskname = "";
     _mutex.unlock();
 }
 
 void AllChannels::stopJob() {
     _mutex.lock();
+    lockfun = "stopJob";
+    taskname = pcTaskGetName(NULL);
     for (auto channel : _channelq) {
         channel->stopJob();
     }
+    lockfun = "";
+    taskname = "";
     _mutex.unlock();
 }
 
 size_t AllChannels::write(const uint8_t* buffer, size_t length) {
     _mutex.lock();
+    lockfun = "write";
+    taskname = pcTaskGetName(NULL);
     for (auto channel : _channelq) {
         channel->write(buffer, length);
     }
+    lockfun = "";
+    taskname = "";
     _mutex.unlock();
     return length;
 }
@@ -294,15 +334,27 @@ Channel* AllChannels::pollLine(char* line) {
     }
 
     _mutex.lock();
+    lockfun = "pollLine";
+    taskname = pcTaskGetName(NULL);
 
     for (auto channel : _channelq) {
         // Skip the last channel in the loop
-        if (channel != _lastChannel && channel->pollLine(line)) {
+        if (channel == _lastChannel) {
+            continue;
+        }
+        channame = channel->name();
+        if (channel->pollLine(line)) {
             _lastChannel = channel;
+            lockfun = "";
+            taskname = "";
+            channame ="";
             _mutex.unlock();
             return _lastChannel;
         }
     }
+    lockfun = "";
+    taskname = "";
+    channame ="";
     _mutex.unlock();
     // If no other channel returned a line, try the last one
     if (_lastChannel && _lastChannel->pollLine(line)) {
@@ -314,12 +366,13 @@ Channel* AllChannels::pollLine(char* line) {
 
 AllChannels allChannels;
 
-// int      esp_clk_cpu_freq(void);
 int32_t longest_poll = 0;
 int32_t longest_wifi = 0;
 
 Channel* pollChannels(char* line) {
     poll_gpios();
+
+    /*
     // Throttle polling when we are not ready for a line, thus preventing
     // planner buffer starvation due to not calling Stepper::prep_buffer()
     // frequently enough, which is normally called periodically at the end
@@ -333,29 +386,17 @@ Channel* pollChannels(char* line) {
         return nullptr;
     }
     counter = 50;
+    */
 
-    uint32_t ticks_per_us = esp_clk_cpu_freq() / 1000000;
-
-    int32_t poll_before = getCpuTicks();
+    int32_t ptic = tic();
     Channel* retval = allChannels.pollLine(line);
-    int32_t poll_elapsed = getCpuTicks() - poll_before;
-    int32_t poll_us = (poll_elapsed + ticks_per_us/2)/ticks_per_us;
-    if (poll_us > longest_poll) {
-        longest_poll = poll_us;
-    }
+    longest_poll = toc_us_max(ptic, longest_poll);
 
-    int32_t restart_before = getCpuTicks();
     WebUI::COMMANDS::handle();      // Handles ESP restart
-    int32_t restart_elapsed = getCpuTicks() - restart_before;
-    int32_t restart_us = (restart_elapsed + ticks_per_us/2)/ticks_per_us;
 
-    int32_t wifi_before = getCpuTicks();
+    int32_t wtic = tic();
     WebUI::wifi_services.handle();  // OTA, webServer, telnetServer polling
-    int32_t wifi_elapsed = getCpuTicks() - wifi_before;
-    int32_t wifi_us = (wifi_elapsed + ticks_per_us/2)/ticks_per_us;
-    if (wifi_us > longest_wifi) {
-        longest_wifi = wifi_us;
-    }
+    longest_wifi = toc_us_max(wtic, longest_wifi);
 
     return retval;
 }

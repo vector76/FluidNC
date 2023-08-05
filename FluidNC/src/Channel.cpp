@@ -6,6 +6,7 @@
 #include "Machine/MachineConfig.h"  // config
 #include "Serial.h"                 // execute_realtime_command
 #include "Limits.h"
+#include "TicToc.h"
 
 void Channel::flushRx() {
     _linelen   = 0;
@@ -99,34 +100,67 @@ void Channel::autoReportGCodeState() {
         _lastFeedRate     = gc_state.feed_rate;
     }
 }
+
+int stuck_in_autoreport = 0;
+extern int report_stuck_at;
+
 void Channel::autoReport() {
     if (_reportInterval) {
+        stuck_in_autoreport = 1;
+        int32_t now = xTaskGetTickCount();
+
+        stuck_in_autoreport = 2;
+        if (now - _lastTickAttempt < 5) {
+            stuck_in_autoreport = 0;
+            return;  // hasn't even advanced 5 ms
+        }
+        _lastTickAttempt = now;
+        stuck_in_autoreport = 3;
         auto limitState = limits_get_state();
+        stuck_in_autoreport = 4;
         auto probeState = config->_probe->get_state();
+        stuck_in_autoreport = 5;
         if (_reportWco || sys.state != _lastState || limitState != _lastLimits || probeState != _lastProbe ||
-            (motionState() && (int32_t(xTaskGetTickCount()) - _nextReportTime) >= 0)) {
+            (motionState() && (now - _nextReportTime) >= 0)) {
             if (_reportWco) {
                 report_wco_counter = 0;
             }
+            stuck_in_autoreport = 6;
+
             _reportWco  = false;
             _lastState  = sys.state;
             _lastLimits = limitState;
             _lastProbe  = probeState;
 
-            _nextReportTime = xTaskGetTickCount() + _reportInterval;
+            _nextReportTime = now + _reportInterval;
+            stuck_in_autoreport = 7;
             report_realtime_status(*this);
+            report_stuck_at = 0;
+            stuck_in_autoreport = 8;
         }
+        stuck_in_autoreport = 9;
         if (_reportNgc != CoordIndex::End) {
+            stuck_in_autoreport = 10;
             report_ngc_coord(_reportNgc, *this);
             _reportNgc = CoordIndex::End;
+            stuck_in_autoreport = 11;
         }
+        stuck_in_autoreport = 12;
         autoReportGCodeState();
+        stuck_in_autoreport = 0;
     }
 }
 
+extern const char *heartbeat_message;
+
 Channel* Channel::pollLine(char* line) {
     handle();
+    int32_t tstart = tic();
     while (1) {
+        if (toc_us(tstart) > 5000000) {
+            heartbeat_message = "Stuck in Channel::pollLine!";
+            break;
+        }
         int ch;
         if (line && _queue.size()) {
             ch = _queue.front();

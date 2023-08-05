@@ -38,6 +38,7 @@ protected:
 
     uint32_t _reportInterval = 0;
     int32_t  _nextReportTime = 0;
+    int32_t  _lastTickAttempt = 0;
 
     gc_modal_t _lastModal;
     uint8_t    _lastTool;

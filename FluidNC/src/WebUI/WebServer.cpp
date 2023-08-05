@@ -5,6 +5,7 @@
 #include "../Config.h"
 #include "../Serial.h"    // is_realtime_command()
 #include "../Settings.h"  // settings_execute_line()
+#include "../TicToc.h"
 
 #ifdef ENABLE_WIFI
 
@@ -1122,20 +1123,40 @@ namespace WebUI {
         }
     }
 
+    int32_t time_a = 0;
+    int32_t time_b = 0;
+    int32_t time_c = 0;
+
     void Web_Server::handle() {
         static uint32_t start_time = millis();
         if (WiFi.getMode() == WIFI_AP) {
             dnsServer.processNextRequest();
         }
+        int32_t ta = tic();
         if (_webserver) {
-            _webserver->handleClient();
+            _webserver->handleClient();  // can take a very long time sometimes
         }
+        time_a = toc_us_max(ta, time_a);
+
+        int32_t tb = tic();
         if (_socket_server && _setupdone) {
-            _socket_server->loop();
+            _socket_server->loop();  // about 20 ms is common
         }
+        time_b = toc_us_max(tb, time_b);
+
+        int32_t tc = tic();
         if ((millis() - start_time) > 10000 && _socket_server) {
             WSChannels::sendPing();
             start_time = millis();
+        }
+        time_c = toc_us_max(tc, time_c);
+
+        if (time_a + time_b + time_c > 100000) {
+            // more than 100 ms, report the decomposition
+            log_warn("Web_Server::handle took time " << time_a << ", " << time_b << ", " << time_c);
+            time_a = 0;
+            time_b = 0;
+            time_c = 0;
         }
     }
 

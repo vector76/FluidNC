@@ -18,6 +18,7 @@
 #include "MotionControl.h"  // PARKING_MOTION_LINE_NUMBER
 #include "Settings.h"       // settings_execute_startup
 #include "Machine/LimitPin.h"
+#include "TicToc.h"
 
 volatile ExecAlarm rtAlarm;  // Global realtime executor bitflag variable for setting various alarms.
 
@@ -129,10 +130,13 @@ void send_line(Channel& channel, const char* line) {
 // the pointer to reclaim the memory.
 // This form has intermediate efficiency, as the string
 // is allocated once and freed once.
+bool send_line_hung_on_queue = false;
 void send_line(Channel& channel, const std::string* line) {
     if (outputTask) {
         LogMessage msg { &channel, (void*)line, true };
+        send_line_hung_on_queue = true;
         while (!xQueueSend(message_queue, &msg, 10)) {}
+        send_line_hung_on_queue = false;
     } else {
         channel.println(line->c_str());
         delete line;
@@ -158,10 +162,15 @@ void send_line(Channel& channel, const std::string& line) {
     }
 }
 
+int32_t output_loop_last_iter = 0;
+int32_t main_loop_last_iter = 0;
+int32_t polling_loop_last_iter = 0;
+
 void output_loop(void* unused) {
     while (true) {
         LogMessage message;
-        if (xQueueReceive(message_queue, &message, 0)) {
+        while (xQueueReceive(message_queue, &message, portMAX_DELAY)) {
+            output_loop_last_iter = tic();
             if (message.isString) {
                 std::string* s = static_cast<std::string*>(message.line);
                 message.channel->println(s->c_str());
@@ -171,35 +180,145 @@ void output_loop(void* unused) {
                 message.channel->println(cp);
             }
         }
-        vTaskDelay(0);
+
+        log_error("output_loop xQueueReceive failed");
     }
 }
 
 Channel* activeChannel = nullptr;  // Channel associated with the input line
 
 TaskHandle_t pollingTask = nullptr;
+TaskHandle_t heartbeatTask = nullptr;
 
 char activeLine[Channel::maxLine];
 
+extern const char *lockfun;
+extern const char *taskname;
+extern const char *channame;
+const char *heartbeat_message = nullptr;
+extern int stuck_in_autoreport;
+extern int report_stuck_at;
+
+void hearbeat_loop(void *unused) {
+    bool heartbeat = true;
+    Uart *dbuart = config->_uarts[2];
+    char tmp[60];
+
+    if (dbuart != nullptr) {
+        dbuart->write((uint8_t *)"\r\n---- debug ----\r\n", 19);
+        for (int loopct = 1; true; loopct++) {
+            char c = '\0';
+            int nread = dbuart->timedReadBytes(&c, 1, 500);
+            if (heartbeat_message != nullptr) {
+                dbuart->write((uint8_t *)"\r\n", 2);
+                dbuart->write((uint8_t *)heartbeat_message, strlen(heartbeat_message));
+                dbuart->write((uint8_t *)"\r\n", 2);
+            }
+            else if (nread == 0) {
+                dbuart->write('.');
+                if (loopct % 60 == 0) {
+                    dbuart->write('\r');
+                    dbuart->write('\n');
+                }
+            }
+            else if (c == 'a') {
+                dbuart->write((uint8_t *)"\r\ngot letter 'a'\r\n", 18);
+            }
+            else if (c == 't') {
+                int32_t main_us = toc_us(main_loop_last_iter);
+                int32_t poll_us = toc_us(polling_loop_last_iter);
+                int32_t out_us = toc_us(output_loop_last_iter);
+
+                sprintf(tmp, "\r\nmain loop time: %d.%03d ms\r\n", main_us/1000, main_us%1000);
+                dbuart->write((uint8_t *)tmp, strlen(tmp));
+                sprintf(tmp, "poll loop time: %d.%03d ms\r\n", poll_us/1000, poll_us%1000);
+                dbuart->write((uint8_t *)tmp, strlen(tmp));
+                sprintf(tmp, "out loop time: %d.%03d ms\r\n", out_us/1000, out_us%1000);
+                dbuart->write((uint8_t *)tmp, strlen(tmp));
+                if (stuck_in_autoreport) {
+                    sprintf(tmp, "stuck in autoreport at %d\r\n", stuck_in_autoreport);
+                    dbuart->write((uint8_t *)tmp, strlen(tmp));
+                    sprintf(tmp, "stuck in report_realtime_status at line %d\r\n", report_stuck_at);
+                    dbuart->write((uint8_t *)tmp, strlen(tmp));
+                    sprintf(tmp, "%s\r\n", send_line_hung_on_queue ? "stuck in send_line queue" : "not stuck in send_line");
+                    dbuart->write((uint8_t *)tmp, strlen(tmp));
+                }
+                else {
+                    dbuart->write((uint8_t *)"not stuck in autoreport\r\n", 25);
+                }
+            }
+            else if (c == 'h') {
+                uint32_t currentFree = xPortGetFreeHeapSize();
+                sprintf(tmp, "\r\nCurrent heap free: %u\r\n", currentFree);
+                dbuart->write((uint8_t *)tmp, strlen(tmp));
+            }
+            else if (c == 'm') {
+                if (AllChannels::_mutex.try_lock()) {
+                    AllChannels::_mutex.unlock();
+                    sprintf(tmp, "\r\nAllChannels::_mutex is not locked\r\n");
+                }
+                else {
+                    sprintf(tmp, "\r\nAllChannels::_mutex is locked by '%s' in '%s' (channel '%s')\r\n", taskname, lockfun, channame);
+                }
+                dbuart->write((uint8_t *)tmp, strlen(tmp));
+            }
+        }
+    }
+
+    while (true) {
+        vTaskDelay(500);
+        config->_userOutputs->setDigital(0, heartbeat);
+        heartbeat = !heartbeat;
+    }
+}
+
+uint32_t heapLowWater2 = UINT_MAX;
 bool pollingPaused = false;
 void polling_loop(void* unused) {
+    int32_t wd = tic();
+    int32_t tot_us = 0;
+    int32_t iters = 0;
     // Poll the input sources waiting for a complete line to arrive
-    for (; true; /*feedLoopWDT(), */ vTaskDelay(0)) {
+    while (true) {
+        polling_loop_last_iter = tic();
+        int32_t elapsed = toc_us(wd);
+        if (elapsed > 5000000) {
+            int32_t time_pct100 = tot_us*100/elapsed;
+            log_debug("polling_loop alive, " << time_pct100 << "% time spent, " << iters/5 << "Hz");
+            wd = tic();
+            tot_us = 0;
+            iters = 0;
+        }
+
         // Polling is paused when xmodem is using a channel for binary upload
         if (pollingPaused) {
             vTaskDelay(100);
-            continue;
         }
-        if (activeChannel) {
-            // Poll for realtime characters when waiting for the primary loop
-            // (in another thread) to pick up the line.
-            pollChannels();
-            continue;
+        else {
+            if (activeChannel) {
+                // Poll for realtime characters when waiting for the primary loop
+                // (in another thread) to pick up the line.
+                pollChannels();
+            }
+            else {
+                // Polling without an argument both checks for realtime characters and
+                // returns a line-oriented command if one is ready.
+                activeChannel = pollChannels(activeLine);
+            }
         }
 
-        // Polling without an argument both checks for realtime characters and
-        // returns a line-oriented command if one is ready.
-        activeChannel = pollChannels(activeLine);
+        uint32_t newHeapSize = xPortGetFreeHeapSize();
+        if (newHeapSize < heapLowWater2) {
+            heapLowWater2 = newHeapSize;
+            if (heapLowWater2 < 15000) {
+                log_warn("Low memory (2): " << heapLowWater2 << " bytes");
+            }
+        }
+
+        int32_t ld_us = toc_us(polling_loop_last_iter);  // time for this iteration
+        tot_us += ld_us;
+        iters++;
+        // vTaskDelay(0);
     }
 }
 
@@ -229,6 +348,14 @@ void start_polling() {
                                 1,                 // priority
                                 &outputTask,       // task handle
                                 SUPPORT_TASK_CORE  // core
+        );
+        xTaskCreatePinnedToCore(hearbeat_loop,
+                                "heartbeat",
+                                2048,
+                                0,
+                                1,
+                                &heartbeatTask,
+                                SUPPORT_TASK_CORE
         );
     }
 }
@@ -275,19 +402,26 @@ void reset_longest();
 
 uint32_t heapLowWater = UINT_MAX;
 void     protocol_main_loop() {
-    int32_t longest_poll_us = 0;
-    int32_t longest_wifi_us = 0;
-    int32_t decay_timer = getCpuTicks();
-    int32_t decay_ticks = usToCpuTicks(1000000);  // 1 second is 1 million microseconds
-
     check_startup_state();
     start_polling();
+
+    int32_t wd = tic();
+    int32_t tot_us = 0;
+    int32_t iters = 0;
 
     // ---------------------------------------------------------------------------------
     // Primary loop! Upon a system abort, this exits back to main() to reset the system.
     // This is also where the system idles while waiting for something to do.
     // ---------------------------------------------------------------------------------
     for (;; vTaskDelay(0)) {
+        main_loop_last_iter = tic();
+        if (toc_us(wd) > 5000000) {
+            int32_t time_pct100 = tot_us*100/5000000;
+            log_debug("protocol_main_loop alive, " << time_pct100 << "% time spent, " << iters/5 << "Hz");
+            wd = tic();
+            tot_us = 0;
+            iters = 0;
+        }
         if (activeChannel) {
             // The input polling task has collected a line of input
 #ifdef DEBUG_REPORT_ECHO_RAW_LINE_RECEIVED
@@ -335,36 +469,23 @@ void     protocol_main_loop() {
             }
         }
 
-        int32_t tmp_longest_poll = get_longest_poll();
-        int32_t tmp_longest_wifi = get_longest_wifi();
+        int32_t longest_poll = get_longest_poll();
+        int32_t longest_wifi = get_longest_wifi();
         
-        if (tmp_longest_poll > longest_poll_us) {
-            longest_poll_us = tmp_longest_poll;
-            if (longest_poll_us > 100000) {
-                // only show messages when more than 100 ms
-                log_warn("Longest poll: " << longest_poll_us/1000 << "." << (longest_poll_us/100) % 10 << " ms");
-                longest_poll_us = 0;
-                reset_longest();
-            }
-        }
-
-        if (tmp_longest_wifi > longest_wifi_us) {
-            longest_wifi_us = tmp_longest_wifi;
-            if (longest_wifi_us > 100000) {
-                // only show messages when more than 100 ms
-                log_warn("Longest wifi: " << longest_wifi_us/1000 << "." << (longest_wifi_us/100) % 10 << " ms");
-                longest_wifi_us = 0;
-                reset_longest();
-            }
-        }
-
-        int32_t tnow = getCpuTicks();
-        if (tnow - decay_timer > decay_ticks) {
-            decay_timer = tnow;
-            longest_wifi_us = (longest_wifi_us * 251) / 256;  // decrease by 2% every second to keep generating reports
-            longest_poll_us = (longest_poll_us * 251) / 256;
+        if (longest_poll > 100000) {
+            // only show messages when more than 100 ms
+            log_warn("Longest poll: " << longest_poll/1000 << "." << (longest_poll/100) % 10 << " ms");
             reset_longest();
         }
+
+        if (longest_wifi > 100000) {
+            // only show messages when more than 100 ms
+            log_warn("Longest wifi: " << longest_wifi/1000 << "." << (longest_wifi/100) % 10 << " ms");
+            reset_longest();
+        }
+        int32_t ld_us = toc_us(main_loop_last_iter);  // time for this iteration
+        tot_us += ld_us;
+        iters++;
     }
     return; /* Never reached */
 }

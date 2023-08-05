@@ -530,54 +530,75 @@ static std::string pinString() {
 // Define this to do something if a debug request comes in over serial
 void report_realtime_debug() {}
 
+
+int report_stuck_at = 0;
 // Prints real-time data. This function grabs a real-time snapshot of the stepper subprogram
 // and the actual location of the CNC machine. Users may change the following function to their
 // specific needs, but the desired real-time data report must be as short as possible. This is
 // requires as it minimizes the computational overhead to keep running smoothly,
 // especially during g-code programs with fast, short line segments and high frequency reports (5-20Hz).
 void report_realtime_status(Channel& channel) {
+    report_stuck_at = __LINE__;
     LogStream msg(channel, "<");
+    report_stuck_at = __LINE__;
     msg << state_name();
+    report_stuck_at = __LINE__;
 
     // Report position
     float* print_position = get_mpos();
+    report_stuck_at = __LINE__;
     if (bits_are_true(status_mask->get(), RtStatus::Position)) {
         msg << "|MPos:";
     } else {
         msg << "|WPos:";
+        report_stuck_at = __LINE__;
         mpos_to_wpos(print_position);
+        report_stuck_at = __LINE__;
     }
+    report_stuck_at = __LINE__;
     msg << report_util_axis_values(print_position).c_str();
+    report_stuck_at = __LINE__;
 
     // Returns planner and serial read buffer states.
 
     if (bits_are_true(status_mask->get(), RtStatus::Buffer)) {
+        report_stuck_at = __LINE__;
         msg << "|Bf:" << plan_get_block_buffer_available() << "," << channel.rx_buffer_available();
+        report_stuck_at = __LINE__;
     }
 
     if (config->_useLineNumbers) {
         // Report current line number
+        report_stuck_at = __LINE__;
         plan_block_t* cur_block = plan_get_current_block();
         if (cur_block != NULL) {
+            report_stuck_at = __LINE__;
             uint32_t ln = cur_block->line_number;
             if (ln > 0) {
                 msg << "|Ln:" << ln;
             }
+            report_stuck_at = __LINE__;
         }
     }
 
     // Report realtime feed speed
+    report_stuck_at = __LINE__;
     float rate = Stepper::get_realtime_rate();
+    report_stuck_at = __LINE__;
     if (config->_reportInches) {
         rate /= MM_PER_INCH;
     }
+    report_stuck_at = __LINE__;
     msg << "|FS:" << setprecision(0) << rate << "," << sys.spindle_speed;
+    report_stuck_at = __LINE__;
 
     msg << pinString();
+    report_stuck_at = __LINE__;
 
     if (report_wco_counter > 0) {
         report_wco_counter--;
     } else {
+        report_stuck_at = __LINE__;
         switch (sys.state) {
             case State::Homing:
             case State::Cycle:
@@ -592,12 +613,15 @@ void report_realtime_status(Channel& channel) {
         if (report_ovr_counter == 0) {
             report_ovr_counter = 1;  // Set override on next report.
         }
+        report_stuck_at = __LINE__;
         msg << "|WCO:" << report_util_axis_values(get_wco()).c_str();
+        report_stuck_at = __LINE__;
     }
 
     if (report_ovr_counter > 0) {
         report_ovr_counter--;
     } else {
+        report_stuck_at = __LINE__;
         switch (sys.state) {
             case State::Homing:
             case State::Cycle:
@@ -610,9 +634,13 @@ void report_realtime_status(Channel& channel) {
                 break;
         }
 
+        report_stuck_at = __LINE__;
         msg << "|Ov:" << int(sys.f_override) << "," << int(sys.r_override) << "," << int(sys.spindle_speed_ovr);
+        report_stuck_at = __LINE__;
         SpindleState sp_state      = spindle->get_state();
+        report_stuck_at = __LINE__;
         CoolantState coolant_state = config->_coolant->get_state();
+        report_stuck_at = __LINE__;
         if (sp_state != SpindleState::Disable || coolant_state.Mist || coolant_state.Flood) {
             msg << "|A:";
             switch (sp_state) {
@@ -627,6 +655,7 @@ void report_realtime_status(Channel& channel) {
                 case SpindleState::Unknown:
                     break;
             }
+            report_stuck_at = __LINE__;
 
             auto coolant = coolant_state;
             if (coolant.Flood) {
@@ -635,8 +664,10 @@ void report_realtime_status(Channel& channel) {
             if (coolant.Mist) {
                 msg << "M";
             }
+            report_stuck_at = __LINE__;
         }
     }
+    report_stuck_at = __LINE__;
     if (InputFile::_progress.length()) {
         msg << "|" + InputFile::_progress;
     }
@@ -646,7 +677,9 @@ void report_realtime_status(Channel& channel) {
 #ifdef DEBUG_REPORT_HEAP
     msg << "|Heap:" << xPortGetFreeHeapSize();
 #endif
+    report_stuck_at = __LINE__;
     msg << ">";
+    report_stuck_at = __LINE__;
     // The destructor sends the line when msg goes out of scope
 }
 
