@@ -77,7 +77,8 @@ class AllChannels : public Channel {
     xQueueHandle _killQueue;
 
 public:
-    static std::mutex _mutex;
+    static std::mutex _mutex1;
+    static std::mutex _mutex2;
 
     AllChannels() : Channel("all") { _killQueue = xQueueCreate(3, sizeof(Channel*)); }
 

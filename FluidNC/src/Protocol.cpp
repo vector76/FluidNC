@@ -275,12 +275,20 @@ void hearbeat_loop(void *unused) {
                 dbuart->write((uint8_t *)tmp, strlen(tmp));
             }
             else if (c == 'm') {
-                if (AllChannels::_mutex.try_lock()) {
-                    AllChannels::_mutex.unlock();
-                    sprintf(tmp, "\r\nAllChannels::_mutex is not locked\r\n");
+                if (AllChannels::_mutex1.try_lock()) {
+                    AllChannels::_mutex1.unlock();
+                    sprintf(tmp, "\r\nAllChannels::_mutex1 is not locked\r\n");
                 }
                 else {
-                    sprintf(tmp, "\r\nAllChannels::_mutex is locked by '%s' in '%s' (channel '%s')\r\n", taskname, lockfun, channame);
+                    sprintf(tmp, "\r\nAllChannels::_mutex1 is locked by '%s' in '%s' (channel '%s')\r\n", taskname, lockfun, channame);
+                }
+                dbuart->write((uint8_t *)tmp, strlen(tmp));
+                if (AllChannels::_mutex2.try_lock()) {
+                    AllChannels::_mutex2.unlock();
+                    sprintf(tmp, "AllChannels::_mutex2 is not locked\r\n");
+                }
+                else {
+                    sprintf(tmp, "AllChannels::_mutex2 is locked by '%s' in '%s' (channel '%s')\r\n", taskname, lockfun, channame);
                 }
                 dbuart->write((uint8_t *)tmp, strlen(tmp));
             }

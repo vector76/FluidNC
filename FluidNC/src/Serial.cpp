@@ -62,7 +62,8 @@
 #include <algorithm>
 #include <freertos/task.h>  // portMUX_TYPE, TaskHandle_T
 
-std::mutex AllChannels::_mutex;
+std::mutex AllChannels::_mutex1;
+std::mutex AllChannels::_mutex2;
 
 static TaskHandle_t channelCheckTaskHandle = 0;
 
@@ -201,16 +202,18 @@ const char *taskname = "";
 const char *channame = "";
 
 void AllChannels::registration(Channel* channel) {
-    _mutex.lock();
+    _mutex1.lock();
+    _mutex2.lock();
     lockfun = "registration";
     taskname = pcTaskGetName(NULL);
     _channelq.push_back(channel);
     lockfun = "";
     taskname = "";
-    _mutex.unlock();
-}
+    _mutex2.unlock();
+    _mutex1.unlock();}
 void AllChannels::deregistration(Channel* channel) {
-    _mutex.lock();
+    _mutex1.lock();
+    _mutex2.lock();
     lockfun = "deregistration";
     taskname = pcTaskGetName(NULL);
     if (channel == _lastChannel) {
@@ -219,11 +222,11 @@ void AllChannels::deregistration(Channel* channel) {
     _channelq.erase(std::remove(_channelq.begin(), _channelq.end(), channel), _channelq.end());
     lockfun = "";
     taskname = "";
-    _mutex.unlock();
-}
+    _mutex2.unlock();
+    _mutex1.unlock();}
 
 void AllChannels::listChannels(Channel& out) {
-    _mutex.lock();
+    _mutex1.lock();
     lockfun = "listChannels";
     taskname = pcTaskGetName(NULL);
     std::string retval;
@@ -232,11 +235,10 @@ void AllChannels::listChannels(Channel& out) {
     }
     lockfun = "";
     taskname = "";
-    _mutex.unlock();
-}
+    _mutex1.unlock();}
 
 void AllChannels::flushRx() {
-    _mutex.lock();
+    _mutex1.lock();
     lockfun = "flushRx";
     taskname = pcTaskGetName(NULL);
     for (auto channel : _channelq) {
@@ -244,11 +246,10 @@ void AllChannels::flushRx() {
     }
     lockfun = "";
     taskname = "";
-    _mutex.unlock();
-}
+    _mutex1.unlock();}
 
 size_t AllChannels::write(uint8_t data) {
-    _mutex.lock();
+    _mutex1.lock();
     lockfun = "write";
     taskname = pcTaskGetName(NULL);
     for (auto channel : _channelq) {
@@ -256,11 +257,10 @@ size_t AllChannels::write(uint8_t data) {
     }
     lockfun = "";
     taskname = "";
-    _mutex.unlock();
-    return 1;
+    _mutex1.unlock();    return 1;
 }
 void AllChannels::notifyWco(void) {
-    _mutex.lock();
+    _mutex1.lock();
     lockfun = "notifyWco";
     taskname = pcTaskGetName(NULL);
     for (auto channel : _channelq) {
@@ -268,10 +268,9 @@ void AllChannels::notifyWco(void) {
     }
     lockfun = "";
     taskname = "";
-    _mutex.unlock();
-}
+    _mutex1.unlock();}
 void AllChannels::notifyNgc(CoordIndex coord) {
-    _mutex.lock();
+    _mutex1.lock();
     lockfun = "notifyNgc";
     taskname = pcTaskGetName(NULL);
     for (auto channel : _channelq) {
@@ -279,11 +278,10 @@ void AllChannels::notifyNgc(CoordIndex coord) {
     }
     lockfun = "";
     taskname = "";
-    _mutex.unlock();
-}
+    _mutex1.unlock();}
 
 void AllChannels::stopJob() {
-    _mutex.lock();
+    _mutex1.lock();
     lockfun = "stopJob";
     taskname = pcTaskGetName(NULL);
     for (auto channel : _channelq) {
@@ -291,11 +289,11 @@ void AllChannels::stopJob() {
     }
     lockfun = "";
     taskname = "";
-    _mutex.unlock();
+    _mutex1.unlock();
 }
 
 size_t AllChannels::write(const uint8_t* buffer, size_t length) {
-    _mutex.lock();
+    _mutex1.lock();
     lockfun = "write";
     taskname = pcTaskGetName(NULL);
     for (auto channel : _channelq) {
@@ -303,7 +301,7 @@ size_t AllChannels::write(const uint8_t* buffer, size_t length) {
     }
     lockfun = "";
     taskname = "";
-    _mutex.unlock();
+    _mutex1.unlock();
     return length;
 }
 
@@ -333,7 +331,7 @@ Channel* AllChannels::pollLine(char* line) {
         prevchans = numchans;
     }
 
-    _mutex.lock();
+    _mutex2.lock();
     lockfun = "pollLine";
     taskname = pcTaskGetName(NULL);
 
@@ -348,14 +346,14 @@ Channel* AllChannels::pollLine(char* line) {
             lockfun = "";
             taskname = "";
             channame ="";
-            _mutex.unlock();
+            _mutex2.unlock();
             return _lastChannel;
         }
     }
     lockfun = "";
     taskname = "";
     channame ="";
-    _mutex.unlock();
+    _mutex2.unlock();
     // If no other channel returned a line, try the last one
     if (_lastChannel && _lastChannel->pollLine(line)) {
         return _lastChannel;
