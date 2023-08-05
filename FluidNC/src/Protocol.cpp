@@ -166,19 +166,35 @@ int32_t output_loop_last_iter = 0;
 int32_t main_loop_last_iter = 0;
 int32_t polling_loop_last_iter = 0;
 
+int32_t output_loop_stuck_at = 0;
+Channel *output_stuck_on = nullptr;
+
 void output_loop(void* unused) {
     while (true) {
         LogMessage message;
         while (xQueueReceive(message_queue, &message, portMAX_DELAY)) {
+            output_loop_stuck_at = __LINE__;
             output_loop_last_iter = tic();
+            output_loop_stuck_at = __LINE__;
             if (message.isString) {
+                output_loop_stuck_at = __LINE__;
                 std::string* s = static_cast<std::string*>(message.line);
+                output_loop_stuck_at = __LINE__;
+                output_stuck_on = message.channel;
                 message.channel->println(s->c_str());
+                output_stuck_on = nullptr;
+                output_loop_stuck_at = __LINE__;
                 delete s;
             } else {
+                output_loop_stuck_at = __LINE__;
                 const char* cp = static_cast<const char*>(message.line);
+                output_loop_stuck_at = __LINE__;
+                output_stuck_on = message.channel;
                 message.channel->println(cp);
+                output_stuck_on = nullptr;
+                output_loop_stuck_at = __LINE__;
             }
+            output_loop_stuck_at = __LINE__;  // this will be the case if it's waiting for queue message
         }
 
         log_error("output_loop xQueueReceive failed");
@@ -223,6 +239,12 @@ void hearbeat_loop(void *unused) {
             }
             else if (c == 'a') {
                 dbuart->write((uint8_t *)"\r\ngot letter 'a'\r\n", 18);
+            }
+            else if (c == 'o') {
+                sprintf(tmp, "\r\noutput stuck line: %d\r\n", output_loop_stuck_at);
+                dbuart->write((uint8_t *)tmp, strlen(tmp));
+                sprintf(tmp, "output stuck channel: %s\r\n", output_stuck_on == nullptr ? "none" : output_stuck_on->name());
+                dbuart->write((uint8_t *)tmp, strlen(tmp));
             }
             else if (c == 't') {
                 int32_t main_us = toc_us(main_loop_last_iter);
