@@ -367,6 +367,11 @@ AllChannels allChannels;
 int32_t longest_poll = 0;
 int32_t longest_wifi = 0;
 
+extern bool mem_warnings_happening;
+extern bool mem_warnings_pollLine;
+extern bool mem_warnings_commands;
+extern bool mem_warnings_wifi_services;
+
 Channel* pollChannels(char* line) {
     poll_gpios();
 
@@ -387,13 +392,28 @@ Channel* pollChannels(char* line) {
     */
 
     int32_t ptic = tic();
+    mem_warnings_happening = false;
     Channel* retval = allChannels.pollLine(line);
+    if (mem_warnings_happening) {
+        mem_warnings_pollLine = true;
+        log_warn("memory warnings during allChannels.pollLine()");
+    }
     longest_poll = toc_us_max(ptic, longest_poll);
 
+    mem_warnings_happening = false;
     WebUI::COMMANDS::handle();      // Handles ESP restart
+    if (mem_warnings_happening) {
+        mem_warnings_commands = true;
+        log_warn("memory warnings during WebUI::COMMANDS::handle()");
+    }
 
     int32_t wtic = tic();
+    mem_warnings_happening = false;
     WebUI::wifi_services.handle();  // OTA, webServer, telnetServer polling
+    if (mem_warnings_happening) {
+        mem_warnings_wifi_services = true;
+        log_warn("memory warnings during wifi_services.handle()");
+    }
     longest_wifi = toc_us_max(wtic, longest_wifi);
 
     return retval;

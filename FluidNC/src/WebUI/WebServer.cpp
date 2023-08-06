@@ -17,12 +17,12 @@
 #    include <WebSocketsServer.h>
 #    include <WiFi.h>
 #    include <WebServer.h>
-#    include <ESP32SSDP.h>
+//#    include <ESP32SSDP.h>
 #    include <StreamString.h>
 #    include <Update.h>
 #    include <esp_wifi_types.h>
 #    include <ESPmDNS.h>
-#    include <ESP32SSDP.h>
+//#    include <ESP32SSDP.h>
 #    include <DNSServer.h>
 #    include "WebSettings.h"
 
@@ -159,6 +159,7 @@ namespace WebUI {
             _webserver->on("/fwlink/", HTTP_ANY, handle_root);
         }
 
+#if 0
         //SSDP service presentation
         if (WiFi.getMode() == WIFI_STA) {
             _webserver->on("/description.xml", HTTP_GET, handle_SSDP);
@@ -180,6 +181,7 @@ namespace WebUI {
             log_info("SSDP Started");
             SSDP.begin();
         }
+#endif
 
         log_info("HTTP started on port " << WebUI::http_port->get());
         //start webserver
@@ -199,7 +201,7 @@ namespace WebUI {
     void Web_Server::end() {
         _setupdone = false;
 
-        SSDP.end();
+//        SSDP.end();
 
         //remove mDNS
         mdns_service_remove("_http", "_tcp");
@@ -379,6 +381,9 @@ namespace WebUI {
 
     //http SSDP xml presentation
     void Web_Server::handle_SSDP() {
+        return;
+
+        /*
         StreamString sschema;
         if (!sschema.reserve(1024)) {
             _webserver->send(500);
@@ -416,6 +421,7 @@ namespace WebUI {
         const char* serialNumber = std::to_string(chipId).c_str();
         sschema.printf(templ, sip, _port, wifi_config.Hostname().c_str(), serialNumber, uuid);
         _webserver->send(200, "text/xml", sschema);
+        */
     }
 
     // WebUI sends a PAGEID arg to identify the websocket it is using

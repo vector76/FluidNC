@@ -167,6 +167,10 @@ uint32_t output_loop_count = 0;
 
 int32_t main_loop_last_iter = 0;
 uint32_t main_loop_count = 0;
+bool mem_warnings_happening = false;
+bool mem_warnings_pollLine = false;
+bool mem_warnings_commands = false;
+bool mem_warnings_wifi_services = false;
 
 int32_t polling_loop_last_iter = 0;
 uint32_t polling_loop_count = 0;
@@ -224,12 +228,25 @@ const char *heartbeat_message = nullptr;
 extern int stuck_in_autoreport;
 extern int report_stuck_at;
 
+bool heartbeat_ram = false;
+
+char heap_char() {
+    uint8_t kfree = xPortGetFreeHeapSize()/1024;
+    if (kfree <= 9) {
+        return '0' + kfree;  // 0 to 9
+    }
+    if (kfree <= 35) {
+        return 'A'+(kfree-10);  // 10 to 35
+    }
+    return 'a' + (kfree-35);  // 36=a and higher (up to 61=z)
+}
+
 void uart_write_str(Uart *dbuart, const char *s) {
     dbuart->write((uint8_t *)s, strlen(s));
 }
 
 bool heartbeat_debug(Uart *dbuart, char c) {
-    char tmp[80];
+    char tmp[60];
     if (c == 'a') {
         uart_write_str(dbuart, "\r\ngot letter 'a'\r\n");
     }
@@ -264,7 +281,7 @@ bool heartbeat_debug(Uart *dbuart, char c) {
     }
     else if (c == 'h') {
         uint32_t currentFree = xPortGetFreeHeapSize();
-        sprintf(tmp, "\r\nCurrent heap free: %u\r\n", currentFree);
+        sprintf(tmp, "\r\nCurrent heap free: %u (%c)\r\n", currentFree, heap_char());
         uart_write_str(dbuart, tmp);
     }
     else if (c == 'm') {
@@ -273,7 +290,9 @@ bool heartbeat_debug(Uart *dbuart, char c) {
             uart_write_str(dbuart, "\r\nAllChannels::_mutex1 is not locked\r\n");
         }
         else {
-            sprintf(tmp, "\r\nAllChannels::_mutex1 is locked by '%s' in '%s' (channel '%s')\r\n", taskname, lockfun, channame);
+            sprintf(tmp, "\r\nAllChannels::_mutex1 is locked by '%s' in '%s'", taskname, lockfun);
+            uart_write_str(dbuart, tmp);
+            sprintf(tmp, " (channel '%s')\r\n", channame);
             uart_write_str(dbuart, tmp);
         }
         if (AllChannels::_mutex2.try_lock()) {
@@ -281,7 +300,9 @@ bool heartbeat_debug(Uart *dbuart, char c) {
             uart_write_str(dbuart, "AllChannels::_mutex2 is not locked\r\n");
         }
         else {
-            sprintf(tmp, "AllChannels::_mutex2 is locked by '%s' in '%s' (channel '%s')\r\n", taskname, lockfun, channame);
+            sprintf(tmp, "AllChannels::_mutex2 is locked by '%s' in '%s'", taskname, lockfun);
+            uart_write_str(dbuart, tmp);
+            sprintf(tmp, " (channel '%s')\r\n", channame);
             uart_write_str(dbuart, tmp);
         }
     }
@@ -301,7 +322,7 @@ void hearbeat_loop(void *unused) {
     Uart *dbuart = config->_uarts[2];
 
     if (dbuart != nullptr) {
-        uart_write_str(dbuart, "\r\n---- debug (o/t/m/h/x/r) ----\r\n");
+        uart_write_str(dbuart, "\r\n---- debug (o/t/m/h/x/r/q) ----\r\n");
         for (int loopct = 1; true; loopct++) {
             char c = '\0';
             int nread = dbuart->timedReadBytes(&c, 1, 500);  // serves to set heartbeat cadence
@@ -311,9 +332,23 @@ void hearbeat_loop(void *unused) {
                 uart_write_str(dbuart, "\r\n");
             }
             else if (nread == 0) {
-                dbuart->write('.');
+                if (heartbeat_ram) {
+                    dbuart->write(heap_char());
+                }
+                else {
+                    dbuart->write('.');
+                }
                 if (loopct % 60 == 0) {
-                uart_write_str(dbuart, "\r\n");
+                    uart_write_str(dbuart, "\r\n");
+                }
+            }
+            else if (c == 'q') {
+                heartbeat_ram = !heartbeat_ram;
+                if (heartbeat_ram) {
+                    uart_write_str(dbuart, "\r\nheartbeat mode set to RAM\r\n");
+                }
+                else {
+                    uart_write_str(dbuart, "\r\nheartbeat mode set to plain (.)\r\n");
                 }
             }
             else if (c == 'x') {
@@ -347,7 +382,7 @@ void polling_loop(void* unused) {
         int32_t elapsed = toc_us(wd);
         if (elapsed > 5000000) {
             int32_t time_pct100 = tot_us*100/elapsed;
-            log_debug("polling_loop alive, " << time_pct100 << "% time spent, " << iters/5 << "Hz");
+            //log_debug("polling_loop alive, " << time_pct100 << "% time spent, " << iters/5 << "Hz");
             wd = tic();
             tot_us = 0;
             iters = 0;
@@ -374,7 +409,7 @@ void polling_loop(void* unused) {
         if (newHeapSize < heapLowWater2) {
             heapLowWater2 = newHeapSize;
             if (heapLowWater2 < 15000) {
-                log_warn("Low memory (2): " << heapLowWater2 << " bytes");
+                //log_warn("Low memory (2): " << heapLowWater2 << " bytes");
             }
         }
 
@@ -467,6 +502,8 @@ void     protocol_main_loop() {
     check_startup_state();
     start_polling();
 
+    uint32_t last_loop_warning = 0;
+    int32_t consecutive_warnings = 0;
     int32_t wd = tic();
     int32_t tot_us = 0;
     int32_t iters = 0;
@@ -480,7 +517,7 @@ void     protocol_main_loop() {
         main_loop_count++;
         if (toc_us(wd) > 5000000) {
             int32_t time_pct100 = tot_us*100/5000000;
-            log_debug("protocol_main_loop alive, " << time_pct100 << "% time spent, " << iters/5 << "Hz");
+            //log_debug("protocol_main_loop alive, " << time_pct100 << "% time spent, " << iters/5 << "Hz");
             wd = tic();
             tot_us = 0;
             iters = 0;
@@ -528,8 +565,21 @@ void     protocol_main_loop() {
         if (newHeapSize < heapLowWater) {
             heapLowWater = newHeapSize;
             if (heapLowWater < heapWarnThreshold) {
-                log_warn("Low memory: " << heapLowWater << " bytes  count mpo: " << main_loop_count << " " << polling_loop_count << " " << output_loop_count);
+                log_warn("Low memory: " << heapLowWater << " bytes (" << heap_char() << ") count mpo: " << main_loop_count << " " << polling_loop_count << " " << output_loop_count);
             }
+
+            if (last_loop_warning == main_loop_count-1) {
+                consecutive_warnings++;
+                if (consecutive_warnings == 5) {
+                    mem_warnings_happening = true;
+                }
+            }
+            else {
+                consecutive_warnings = 0;
+            }
+
+
+            last_loop_warning = main_loop_count;
         }
 
         int32_t longest_poll = get_longest_poll();
