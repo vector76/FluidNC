@@ -80,13 +80,13 @@ namespace MotorDrivers {
         }
 
         // dump the registers. This is helpful for people migrating to the Pro version
-        log_debug("CHOPCONF: 0x" << to_hex(tmc2209->CHOPCONF()));
-        log_debug("COOLCONF: 0x" << to_hex(tmc2209->COOLCONF()));
-        log_debug("TPWMTHRS: 0x" << to_hex(tmc2209->TPWMTHRS()));
-        log_debug("TCOOLTHRS: 0x" << to_hex(tmc2209->TCOOLTHRS()));
-        log_debug("GCONF: 0x" << to_hex(tmc2209->GCONF()));
-        log_debug("PWMCONF: 0x" << to_hex(tmc2209->PWMCONF()));
-        log_debug("IHOLD_IRUN: 0x" << to_hex(tmc2209->IHOLD_IRUN()));
+        log_debug("CHOPCONF: " << to_hex(tmc2209->CHOPCONF()));
+        log_debug("COOLCONF: " << to_hex(tmc2209->COOLCONF()));
+        log_debug("TPWMTHRS: " << to_hex(tmc2209->TPWMTHRS()));
+        log_debug("TCOOLTHRS: " << to_hex(tmc2209->TCOOLTHRS()));
+        log_debug("GCONF: " << to_hex(tmc2209->GCONF()));
+        log_debug("PWMCONF: " << to_hex(tmc2209->PWMCONF()));
+        log_debug("IHOLD_IRUN: " << to_hex(tmc2209->IHOLD_IRUN()));
 
         _cs_pin.synchronousWrite(false);
     }
