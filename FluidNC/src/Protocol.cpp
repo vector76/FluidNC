@@ -163,8 +163,13 @@ void send_line(Channel& channel, const std::string& line) {
 }
 
 int32_t output_loop_last_iter = 0;
+uint32_t output_loop_count = 0;
+
 int32_t main_loop_last_iter = 0;
+uint32_t main_loop_count = 0;
+
 int32_t polling_loop_last_iter = 0;
+uint32_t polling_loop_count = 0;
 
 int32_t output_loop_stuck_at = 0;
 Channel *output_stuck_on = nullptr;
@@ -175,6 +180,7 @@ void output_loop(void* unused) {
         while (xQueueReceive(message_queue, &message, portMAX_DELAY)) {
             output_loop_stuck_at = __LINE__;
             output_loop_last_iter = tic();
+            output_loop_count++;
             output_loop_stuck_at = __LINE__;
             if (message.isString) {
                 output_loop_stuck_at = __LINE__;
@@ -194,7 +200,7 @@ void output_loop(void* unused) {
                 output_stuck_on = nullptr;
                 output_loop_stuck_at = __LINE__;
             }
-            output_loop_stuck_at = __LINE__;  // this will be the case if it's waiting for queue message
+            output_loop_stuck_at = 0;  // this will be the case if it's waiting for queue message
         }
 
         log_error("output_loop xQueueReceive failed");
@@ -208,6 +214,9 @@ TaskHandle_t heartbeatTask = nullptr;
 
 char activeLine[Channel::maxLine];
 
+uint32_t heapLowWater = UINT_MAX;
+uint32_t heapLowWater2 = UINT_MAX;
+
 extern const char *lockfun;
 extern const char *taskname;
 extern const char *channame;
@@ -215,82 +224,106 @@ const char *heartbeat_message = nullptr;
 extern int stuck_in_autoreport;
 extern int report_stuck_at;
 
+void uart_write_str(Uart *dbuart, const char *s) {
+    dbuart->write((uint8_t *)s, strlen(s));
+}
+
+bool heartbeat_debug(Uart *dbuart, char c) {
+    char tmp[80];
+    if (c == 'a') {
+        uart_write_str(dbuart, "\r\ngot letter 'a'\r\n");
+    }
+    else if (c == 'o') {
+        sprintf(tmp, "\r\noutput stuck line: %d\r\n", output_loop_stuck_at);
+        uart_write_str(dbuart, tmp);
+        sprintf(tmp, "output stuck channel: %s\r\n", output_stuck_on == nullptr ? "none" : output_stuck_on->name());
+        uart_write_str(dbuart, tmp);
+    }
+    else if (c == 't') {
+        int32_t main_us = toc_us(main_loop_last_iter);
+        int32_t poll_us = toc_us(polling_loop_last_iter);
+        int32_t out_us = toc_us(output_loop_last_iter);
+
+        sprintf(tmp, "\r\nmain loop time: %d.%03d ms, count: %u\r\n", main_us/1000, main_us%1000, main_loop_count);
+        uart_write_str(dbuart, tmp);
+        sprintf(tmp, "poll loop time: %d.%03d ms, count: %u\r\n", poll_us/1000, poll_us%1000, polling_loop_count);
+        uart_write_str(dbuart, tmp);
+        sprintf(tmp, "out loop time: %d.%03d ms, count: %u\r\n", out_us/1000, out_us%1000, output_loop_count);
+        uart_write_str(dbuart, tmp);
+        if (stuck_in_autoreport) {
+            sprintf(tmp, "stuck in autoreport at %d\r\n", stuck_in_autoreport);
+            uart_write_str(dbuart, tmp);
+            sprintf(tmp, "stuck in report_realtime_status at line %d\r\n", report_stuck_at);
+            uart_write_str(dbuart, tmp);
+            sprintf(tmp, "%s\r\n", send_line_hung_on_queue ? "stuck in send_line queue" : "not stuck in send_line");
+            uart_write_str(dbuart, tmp);
+        }
+        else {
+            uart_write_str(dbuart, "not stuck in autoreport\r\n");
+        }
+    }
+    else if (c == 'h') {
+        uint32_t currentFree = xPortGetFreeHeapSize();
+        sprintf(tmp, "\r\nCurrent heap free: %u\r\n", currentFree);
+        uart_write_str(dbuart, tmp);
+    }
+    else if (c == 'm') {
+        if (AllChannels::_mutex1.try_lock()) {
+            AllChannels::_mutex1.unlock();
+            uart_write_str(dbuart, "\r\nAllChannels::_mutex1 is not locked\r\n");
+        }
+        else {
+            sprintf(tmp, "\r\nAllChannels::_mutex1 is locked by '%s' in '%s' (channel '%s')\r\n", taskname, lockfun, channame);
+            uart_write_str(dbuart, tmp);
+        }
+        if (AllChannels::_mutex2.try_lock()) {
+            AllChannels::_mutex2.unlock();
+            uart_write_str(dbuart, "AllChannels::_mutex2 is not locked\r\n");
+        }
+        else {
+            sprintf(tmp, "AllChannels::_mutex2 is locked by '%s' in '%s' (channel '%s')\r\n", taskname, lockfun, channame);
+            uart_write_str(dbuart, tmp);
+        }
+    }
+    else if (c == 'r') {
+        heapLowWater = UINT_MAX;
+        heapLowWater2 = UINT_MAX;
+        uart_write_str(dbuart, "\r\nReset memory low watermark\r\n");
+    }
+    else {
+        return false;  // did not match one of the specified characters
+    }
+    return true;  // matched one of the specified characters
+}
+
 void hearbeat_loop(void *unused) {
     bool heartbeat = true;
     Uart *dbuart = config->_uarts[2];
-    char tmp[60];
 
     if (dbuart != nullptr) {
-        dbuart->write((uint8_t *)"\r\n---- debug ----\r\n", 19);
+        uart_write_str(dbuart, "\r\n---- debug (o/t/m/h/x/r) ----\r\n");
         for (int loopct = 1; true; loopct++) {
             char c = '\0';
-            int nread = dbuart->timedReadBytes(&c, 1, 500);
+            int nread = dbuart->timedReadBytes(&c, 1, 500);  // serves to set heartbeat cadence
             if (heartbeat_message != nullptr) {
-                dbuart->write((uint8_t *)"\r\n", 2);
+                uart_write_str(dbuart, "\r\n");
                 dbuart->write((uint8_t *)heartbeat_message, strlen(heartbeat_message));
-                dbuart->write((uint8_t *)"\r\n", 2);
+                uart_write_str(dbuart, "\r\n");
             }
             else if (nread == 0) {
                 dbuart->write('.');
                 if (loopct % 60 == 0) {
-                    dbuart->write('\r');
-                    dbuart->write('\n');
+                uart_write_str(dbuart, "\r\n");
                 }
             }
-            else if (c == 'a') {
-                dbuart->write((uint8_t *)"\r\ngot letter 'a'\r\n", 18);
+            else if (c == 'x') {
+                heartbeat_debug(dbuart, 't');
+                heartbeat_debug(dbuart, 'h');
+                heartbeat_debug(dbuart, 'm');
+                heartbeat_debug(dbuart, 'o');
             }
-            else if (c == 'o') {
-                sprintf(tmp, "\r\noutput stuck line: %d\r\n", output_loop_stuck_at);
-                dbuart->write((uint8_t *)tmp, strlen(tmp));
-                sprintf(tmp, "output stuck channel: %s\r\n", output_stuck_on == nullptr ? "none" : output_stuck_on->name());
-                dbuart->write((uint8_t *)tmp, strlen(tmp));
-            }
-            else if (c == 't') {
-                int32_t main_us = toc_us(main_loop_last_iter);
-                int32_t poll_us = toc_us(polling_loop_last_iter);
-                int32_t out_us = toc_us(output_loop_last_iter);
-
-                sprintf(tmp, "\r\nmain loop time: %d.%03d ms\r\n", main_us/1000, main_us%1000);
-                dbuart->write((uint8_t *)tmp, strlen(tmp));
-                sprintf(tmp, "poll loop time: %d.%03d ms\r\n", poll_us/1000, poll_us%1000);
-                dbuart->write((uint8_t *)tmp, strlen(tmp));
-                sprintf(tmp, "out loop time: %d.%03d ms\r\n", out_us/1000, out_us%1000);
-                dbuart->write((uint8_t *)tmp, strlen(tmp));
-                if (stuck_in_autoreport) {
-                    sprintf(tmp, "stuck in autoreport at %d\r\n", stuck_in_autoreport);
-                    dbuart->write((uint8_t *)tmp, strlen(tmp));
-                    sprintf(tmp, "stuck in report_realtime_status at line %d\r\n", report_stuck_at);
-                    dbuart->write((uint8_t *)tmp, strlen(tmp));
-                    sprintf(tmp, "%s\r\n", send_line_hung_on_queue ? "stuck in send_line queue" : "not stuck in send_line");
-                    dbuart->write((uint8_t *)tmp, strlen(tmp));
-                }
-                else {
-                    dbuart->write((uint8_t *)"not stuck in autoreport\r\n", 25);
-                }
-            }
-            else if (c == 'h') {
-                uint32_t currentFree = xPortGetFreeHeapSize();
-                sprintf(tmp, "\r\nCurrent heap free: %u\r\n", currentFree);
-                dbuart->write((uint8_t *)tmp, strlen(tmp));
-            }
-            else if (c == 'm') {
-                if (AllChannels::_mutex1.try_lock()) {
-                    AllChannels::_mutex1.unlock();
-                    sprintf(tmp, "\r\nAllChannels::_mutex1 is not locked\r\n");
-                }
-                else {
-                    sprintf(tmp, "\r\nAllChannels::_mutex1 is locked by '%s' in '%s' (channel '%s')\r\n", taskname, lockfun, channame);
-                }
-                dbuart->write((uint8_t *)tmp, strlen(tmp));
-                if (AllChannels::_mutex2.try_lock()) {
-                    AllChannels::_mutex2.unlock();
-                    sprintf(tmp, "AllChannels::_mutex2 is not locked\r\n");
-                }
-                else {
-                    sprintf(tmp, "AllChannels::_mutex2 is locked by '%s' in '%s' (channel '%s')\r\n", taskname, lockfun, channame);
-                }
-                dbuart->write((uint8_t *)tmp, strlen(tmp));
+            else {
+                heartbeat_debug(dbuart, c);
             }
         }
     }
@@ -302,7 +335,6 @@ void hearbeat_loop(void *unused) {
     }
 }
 
-uint32_t heapLowWater2 = UINT_MAX;
 bool pollingPaused = false;
 void polling_loop(void* unused) {
     int32_t wd = tic();
@@ -311,6 +343,7 @@ void polling_loop(void* unused) {
     // Poll the input sources waiting for a complete line to arrive
     while (true) {
         polling_loop_last_iter = tic();
+        polling_loop_count++;
         int32_t elapsed = toc_us(wd);
         if (elapsed > 5000000) {
             int32_t time_pct100 = tot_us*100/elapsed;
@@ -430,7 +463,6 @@ int32_t get_longest_poll();
 int32_t get_longest_wifi();
 void reset_longest();
 
-uint32_t heapLowWater = UINT_MAX;
 void     protocol_main_loop() {
     check_startup_state();
     start_polling();
@@ -445,6 +477,7 @@ void     protocol_main_loop() {
     // ---------------------------------------------------------------------------------
     for (;; vTaskDelay(0)) {
         main_loop_last_iter = tic();
+        main_loop_count++;
         if (toc_us(wd) > 5000000) {
             int32_t time_pct100 = tot_us*100/5000000;
             log_debug("protocol_main_loop alive, " << time_pct100 << "% time spent, " << iters/5 << "Hz");
@@ -495,7 +528,7 @@ void     protocol_main_loop() {
         if (newHeapSize < heapLowWater) {
             heapLowWater = newHeapSize;
             if (heapLowWater < heapWarnThreshold) {
-                log_warn("Low memory: " << heapLowWater << " bytes");
+                log_warn("Low memory: " << heapLowWater << " bytes  count mpo: " << main_loop_count << " " << polling_loop_count << " " << output_loop_count);
             }
         }
 
