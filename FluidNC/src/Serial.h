@@ -71,12 +71,13 @@ void execute_realtime_command(Cmd command, Channel& channel);
 Channel* pollChannels(char* line = nullptr);
 
 class AllChannels : public Channel {
-    std::vector<Channel*> _channelq;
 
     Channel*     _lastChannel = nullptr;
     xQueueHandle _killQueue;
 
 public:
+    std::vector<Channel*> _channelq;
+
     static std::mutex _mutex1;
     static std::mutex _mutex2;
 

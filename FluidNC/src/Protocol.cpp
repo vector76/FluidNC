@@ -108,6 +108,8 @@ void drain_messages() {
     }
 }
 
+
+bool msgdropped = false;
 // This overload is used primarily with fixed string
 // values.  It sends a pointer to the string whose
 // memory does not need to be reclaimed later.
@@ -116,7 +118,17 @@ void drain_messages() {
 void send_line(Channel& channel, const char* line) {
     if (outputTask) {
         LogMessage msg { &channel, (void*)line, false };
+        #if 0
+        int32_t nchars = strlen(line);
+        int32_t ms = (nchars+13)/14;
+        if (!xQueueSend(message_queue, &msg, ms)) {
+            // queue was full for too long.  drop message
+            msgdropped = true;
+        }
+        vTaskDelay(2*ms);
+        #else
         while (!xQueueSend(message_queue, &msg, 10)) {}
+        #endif
     } else {
         channel.println(line);
     }
@@ -130,13 +142,21 @@ void send_line(Channel& channel, const char* line) {
 // the pointer to reclaim the memory.
 // This form has intermediate efficiency, as the string
 // is allocated once and freed once.
-bool send_line_hung_on_queue = false;
 void send_line(Channel& channel, const std::string* line) {
     if (outputTask) {
         LogMessage msg { &channel, (void*)line, true };
-        send_line_hung_on_queue = true;
+        #if 0
+        int32_t nchars = line->size();
+        int32_t ms = (nchars+13)/14;
+        if (!xQueueSend(message_queue, &msg, ms)) {
+            // queue was full for too long.  drop message
+            msgdropped = true;
+            delete(line);
+        }
+        vTaskDelay(2*ms);
+        #else
         while (!xQueueSend(message_queue, &msg, 10)) {}
-        send_line_hung_on_queue = false;
+        #endif
     } else {
         channel.println(line->c_str());
         delete line;
@@ -172,16 +192,25 @@ bool mem_warnings_pollLine = false;
 bool mem_warnings_commands = false;
 bool mem_warnings_wifi_services = false;
 
+bool freeze_main_task = false;
+bool freeze_io_tasks = false;
+
 int32_t polling_loop_last_iter = 0;
 uint32_t polling_loop_count = 0;
 
 int32_t output_loop_stuck_at = 0;
 Channel *output_stuck_on = nullptr;
 
+int32_t max_message_queue_depth = 0;
+
 void output_loop(void* unused) {
     while (true) {
         LogMessage message;
         while (xQueueReceive(message_queue, &message, portMAX_DELAY)) {
+            int32_t message_count = uxQueueMessagesWaiting(message_queue) + 1;
+            if (message_count > max_message_queue_depth) {
+                max_message_queue_depth = message_count;
+            }
             output_loop_stuck_at = __LINE__;
             output_loop_last_iter = tic();
             output_loop_count++;
@@ -203,6 +232,10 @@ void output_loop(void* unused) {
                 message.channel->println(cp);
                 output_stuck_on = nullptr;
                 output_loop_stuck_at = __LINE__;
+            }
+            while (freeze_io_tasks) {
+                output_loop_stuck_at = __LINE__;
+                vTaskDelay(100);
             }
             output_loop_stuck_at = 0;  // this will be the case if it's waiting for queue message
         }
@@ -228,7 +261,7 @@ const char *heartbeat_message = nullptr;
 extern int stuck_in_autoreport;
 extern int report_stuck_at;
 
-bool heartbeat_ram = false;
+bool heartbeat_ram = true;
 
 char heap_char() {
     uint8_t kfree = xPortGetFreeHeapSize()/1024;
@@ -247,6 +280,8 @@ void uart_write_str(Uart *dbuart, const char *s) {
 
 bool heartbeat_debug(Uart *dbuart, char c) {
     char tmp[60];
+    uint32_t heapvals[10];
+
     if (c == 'a') {
         uart_write_str(dbuart, "\r\ngot letter 'a'\r\n");
     }
@@ -271,8 +306,6 @@ bool heartbeat_debug(Uart *dbuart, char c) {
             sprintf(tmp, "stuck in autoreport at %d\r\n", stuck_in_autoreport);
             uart_write_str(dbuart, tmp);
             sprintf(tmp, "stuck in report_realtime_status at line %d\r\n", report_stuck_at);
-            uart_write_str(dbuart, tmp);
-            sprintf(tmp, "%s\r\n", send_line_hung_on_queue ? "stuck in send_line queue" : "not stuck in send_line");
             uart_write_str(dbuart, tmp);
         }
         else {
@@ -309,8 +342,100 @@ bool heartbeat_debug(Uart *dbuart, char c) {
     else if (c == 'r') {
         heapLowWater = UINT_MAX;
         heapLowWater2 = UINT_MAX;
-        uart_write_str(dbuart, "\r\nReset memory low watermark\r\n");
+        max_message_queue_depth = 0;
+        msgdropped = false;
+        uart_write_str(dbuart, "\r\nReset memory low watermark and max message queue size\r\n");
     }
+    else if (c == 'd') {
+        sprintf(tmp, "\r\nMax message depth: %d\r\n", max_message_queue_depth);
+        uart_write_str(dbuart, tmp);
+        sprintf(tmp, "%sessages dropped\r\n", msgdropped ? "M" : "No m");
+        uart_write_str(dbuart, tmp);
+    }
+    else if (c == 'f') {
+        freeze_io_tasks = !freeze_io_tasks;
+        sprintf(tmp, "\r\nI/O tasks %sfrozen\r\n", freeze_io_tasks ? "" : "un");
+        uart_write_str(dbuart, tmp);
+    }
+    else if (c == 'F') {
+        freeze_main_task = !freeze_main_task;
+        sprintf(tmp, "\r\nMain task %sfrozen\r\n", freeze_main_task ? "" : "un");
+        uart_write_str(dbuart, tmp);
+    }
+    else if (c == '1') {
+        // heap allocation test
+        Channel *ch0 = allChannels._channelq[0];
+        std::string linestr("Here is a string");
+        for (int i=0; i < 10; i++) {
+            // this doesn't use any heap at all
+            //std::string* line = &linestr;
+            //LogMessage msg { ch0, (void *)line, true };
+            //std::string* s = static_cast<std::string*>(msg.line);
+            //msg.channel->println(s->c_str());
+
+            send_line(*ch0, linestr);
+
+            heapvals[i] = xPortGetFreeHeapSize();
+        }
+        for (int i=0; i < 10; i++) {
+            sprintf(tmp, "Current heap free: %u (%c)\r\n", heapvals[i], heap_char());
+            uart_write_str(dbuart, tmp);
+        }
+    }
+    else if (c == '2') {
+        // heap allocation test
+        Channel *ch0 = &allChannels;
+        std::string linestr("Here is a string");
+        for (int i=0; i < 10; i++) {
+            // this doesn't use any heap at all
+            //std::string* line = &linestr;
+            //LogMessage msg { ch0, (void *)line, true };
+            //std::string* s = static_cast<std::string*>(msg.line);
+            //msg.channel->println(s->c_str());
+
+            send_line(*ch0, linestr);
+            
+            heapvals[i] = xPortGetFreeHeapSize();
+        }
+        for (int i=0; i < 10; i++) {
+            sprintf(tmp, "Current heap free: %u (%c)\r\n", heapvals[i], heap_char());
+            uart_write_str(dbuart, tmp);
+        }
+    }
+    else if (c == '3') {
+        for (int i=0; i < 10; i++) {
+            log_debug("Here is a string " << i);
+
+            heapvals[i] = xPortGetFreeHeapSize();
+        }
+        for (int i=0; i < 10; i++) {
+            sprintf(tmp, "Current heap free: %u (%c)\r\n", heapvals[i], heap_char());
+            uart_write_str(dbuart, tmp);
+        }
+    }
+    else if (c == '4') {
+        for (int i=0; i < 10; i++) {
+            log_info("Here is a string " << i);
+
+            heapvals[i] = xPortGetFreeHeapSize();
+        }
+        for (int i=0; i < 10; i++) {
+            sprintf(tmp, "Current heap free: %u (%c)\r\n", heapvals[i], heap_char());
+            uart_write_str(dbuart, tmp);
+        }
+    }
+    else if (c == '5') {
+        for (int i=0; i < 10; i++) {
+            log_debug_to(*allChannels._channelq[0], "Here is a string " << i);
+
+            heapvals[i] = xPortGetFreeHeapSize();
+        }
+        for (int i=0; i < 10; i++) {
+            sprintf(tmp, "Current heap free: %u (%c)\r\n", heapvals[i], heap_char());
+            uart_write_str(dbuart, tmp);
+        }
+    }
+
     else {
         return false;  // did not match one of the specified characters
     }
@@ -319,13 +444,14 @@ bool heartbeat_debug(Uart *dbuart, char c) {
 
 void hearbeat_loop(void *unused) {
     bool heartbeat = true;
+    bool hbfast = false;
     Uart *dbuart = config->_uarts[2];
 
     if (dbuart != nullptr) {
         uart_write_str(dbuart, "\r\n---- debug (o/t/m/h/x/r/q) ----\r\n");
         for (int loopct = 1; true; loopct++) {
             char c = '\0';
-            int nread = dbuart->timedReadBytes(&c, 1, 500);  // serves to set heartbeat cadence
+            int nread = dbuart->timedReadBytes(&c, 1, hbfast ? 200 : 500);  // serves to set heartbeat cadence
             if (heartbeat_message != nullptr) {
                 uart_write_str(dbuart, "\r\n");
                 dbuart->write((uint8_t *)heartbeat_message, strlen(heartbeat_message));
@@ -342,6 +468,9 @@ void hearbeat_loop(void *unused) {
                     uart_write_str(dbuart, "\r\n");
                 }
             }
+            else if (c == 'p') {
+                hbfast = !hbfast;
+            }
             else if (c == 'q') {
                 heartbeat_ram = !heartbeat_ram;
                 if (heartbeat_ram) {
@@ -356,6 +485,7 @@ void hearbeat_loop(void *unused) {
                 heartbeat_debug(dbuart, 'h');
                 heartbeat_debug(dbuart, 'm');
                 heartbeat_debug(dbuart, 'o');
+                heartbeat_debug(dbuart, 'd');
             }
             else {
                 heartbeat_debug(dbuart, c);
@@ -416,6 +546,11 @@ void polling_loop(void* unused) {
         int32_t ld_us = toc_us(polling_loop_last_iter);  // time for this iteration
         tot_us += ld_us;
         iters++;
+
+        while (freeze_io_tasks) {
+            vTaskDelay(100);
+        }
+
         // vTaskDelay(0);
     }
 }
@@ -449,7 +584,7 @@ void start_polling() {
         );
         xTaskCreatePinnedToCore(hearbeat_loop,
                                 "heartbeat",
-                                2048,
+                                3072,
                                 0,
                                 1,
                                 &heartbeatTask,
@@ -599,6 +734,10 @@ void     protocol_main_loop() {
         int32_t ld_us = toc_us(main_loop_last_iter);  // time for this iteration
         tot_us += ld_us;
         iters++;
+
+        while (freeze_main_task) {
+            vTaskDelay(100);
+        }
     }
     return; /* Never reached */
 }
