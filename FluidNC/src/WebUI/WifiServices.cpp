@@ -85,6 +85,9 @@ namespace WebUI {
         if (WiFi.getMode() == WIFI_STA) {
             //start mDns
             const char* h = wifi_hostname->get();
+            if (strcasecmp("none", h) == 0) {
+                log_info("Skipping mDNS");
+            }
             if (!MDNS.begin(h)) {
                 log_info("Cannot start mDNS");
                 no_error = false;
