@@ -160,24 +160,29 @@ namespace WebUI {
 
         //SSDP service presentation
         if (WiFi.getMode() == WIFI_STA) {
-            _webserver->on("/description.xml", HTTP_GET, handle_SSDP);
-            //Add specific for SSDP
-            SSDP.setSchemaURL("description.xml");
-            SSDP.setHTTPPort(_port);
-            SSDP.setName(wifi_config.Hostname().c_str());
-            SSDP.setURL("/");
-            SSDP.setDeviceType("upnp:rootdevice");
-            /*Any customization could be here
-        SSDP.setModelName (ESP32_MODEL_NAME);
-        SSDP.setModelURL (ESP32_MODEL_URL);
-        SSDP.setModelNumber (ESP_MODEL_NUMBER);
-        SSDP.setManufacturer (ESP_MANUFACTURER_NAME);
-        SSDP.setManufacturerURL (ESP_MANUFACTURER_URL);
-        */
+            if (strcasecmp("none", wifi_config.Hostname().c_str()) != 0) {
+                _webserver->on("/description.xml", HTTP_GET, handle_SSDP);
+                //Add specific for SSDP
+                SSDP.setSchemaURL("description.xml");
+                SSDP.setHTTPPort(_port);
+                SSDP.setName(wifi_config.Hostname().c_str());
+                SSDP.setURL("/");
+                SSDP.setDeviceType("upnp:rootdevice");
+                /*Any customization could be here
+                SSDP.setModelName (ESP32_MODEL_NAME);
+                SSDP.setModelURL (ESP32_MODEL_URL);
+                SSDP.setModelNumber (ESP_MODEL_NUMBER);
+                SSDP.setManufacturer (ESP_MANUFACTURER_NAME);
+                SSDP.setManufacturerURL (ESP_MANUFACTURER_URL);
+                */
 
-            //Start SSDP
-            log_info("SSDP Started");
-            SSDP.begin();
+                //Start SSDP
+                log_info("SSDP Started");
+                SSDP.begin();
+            }
+            else {
+                log_info("SSDP Skipped");
+            }
         }
 
         log_info("HTTP started on port " << WebUI::http_port->get());
