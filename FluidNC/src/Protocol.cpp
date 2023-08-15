@@ -278,9 +278,21 @@ void uart_write_str(Uart *dbuart, const char *s) {
     dbuart->write((uint8_t *)s, strlen(s));
 }
 
+Channel * first_websocket() {
+    int nch = allChannels._channelq.size();
+    for (int i=0; i < nch; i++) {
+        if (allChannels._channelq[i]->name()[0] == 'w') {
+            return allChannels._channelq[i];
+        }
+    }
+    return nullptr;
+}
+
+
 bool heartbeat_debug(Uart *dbuart, char c) {
     char tmp[60];
     uint32_t heapvals[10];
+    int32_t tickvals[11];
 
     if (c == 'a') {
         uart_write_str(dbuart, "\r\ngot letter 'a'\r\n");
@@ -381,6 +393,7 @@ bool heartbeat_debug(Uart *dbuart, char c) {
             sprintf(tmp, "Current heap free: %u (%c)\r\n", heapvals[i], heap_char());
             uart_write_str(dbuart, tmp);
         }
+        uart_write_str(dbuart, "That was simple `send_line` ten times to first channel (uart 0)\r\n");
     }
     else if (c == '2') {
         // heap allocation test
@@ -401,6 +414,7 @@ bool heartbeat_debug(Uart *dbuart, char c) {
             sprintf(tmp, "Current heap free: %u (%c)\r\n", heapvals[i], heap_char());
             uart_write_str(dbuart, tmp);
         }
+        uart_write_str(dbuart, "That was simple `send_line` ten times to allChannels\r\n");
     }
     else if (c == '3') {
         for (int i=0; i < 10; i++) {
@@ -412,6 +426,7 @@ bool heartbeat_debug(Uart *dbuart, char c) {
             sprintf(tmp, "Current heap free: %u (%c)\r\n", heapvals[i], heap_char());
             uart_write_str(dbuart, tmp);
         }
+        uart_write_str(dbuart, "That was `log_debug` ten times with no qualifiers (all channels)\r\n");
     }
     else if (c == '4') {
         for (int i=0; i < 10; i++) {
@@ -423,35 +438,179 @@ bool heartbeat_debug(Uart *dbuart, char c) {
             sprintf(tmp, "Current heap free: %u (%c)\r\n", heapvals[i], heap_char());
             uart_write_str(dbuart, tmp);
         }
+        uart_write_str(dbuart, "That was `log_info` ten times with no qualifiers (all channels)\r\n");
     }
     else if (c == '5') {
+        void *ptrs[10];
         for (int i=0; i < 10; i++) {
-            log_debug_to(*allChannels._channelq[0], "Here is a string " << i);
+            ptrs[i] = malloc(50);
 
             heapvals[i] = xPortGetFreeHeapSize();
         }
         for (int i=0; i < 10; i++) {
             sprintf(tmp, "Current heap free: %u (%c)\r\n", heapvals[i], heap_char());
             uart_write_str(dbuart, tmp);
+            free(ptrs[i]);
+        }
+        uart_write_str(dbuart, "That was `malloc(50)` ten times\r\n");
+    }
+    else if (c == '6') {
+        Channel *wsch = first_websocket();
+        if (wsch != nullptr) {
+            tickvals[0] = tic();
+            for (int i=0; i < 10; i++) {
+                sprintf(tmp, "Current heap free %d: %u (%c)\r\n", i, xPortGetFreeHeapSize(), heap_char());
+                wsch->write(tmp, strlen(tmp));
+                tickvals[i+1] = tic();
+            }
+            uart_write_str(dbuart, "That was `channel->write()` ten times to first websocket\r\n");
+            int32_t mintime = INT32_MAX;
+            int32_t maxtime = 0;
+            for (int i=0; i < 10; i++) {
+                if (tickvals[i+1]-tickvals[i] < mintime) {
+                    mintime = tickvals[i+1]-tickvals[i];
+                }
+                if (tickvals[i+1]-tickvals[i] > maxtime) {
+                    maxtime = tickvals[i+1]-tickvals[i];
+                }
+            }
+            int32_t avgtime = (tickvals[10]-tickvals[0])/10;
+            sprintf(tmp, "Fastest individual message: %d.%03d\r\n", (mintime/ticks_per_us)/1000, (mintime/ticks_per_us)%1000);
+            uart_write_str(dbuart, tmp);
+            sprintf(tmp, "Slowest individual message: %d.%03d\r\n", (maxtime/ticks_per_us)/1000, (maxtime/ticks_per_us)%1000);
+            uart_write_str(dbuart, tmp);
+            sprintf(tmp, "Average individual message: %d.%03d\r\n", (avgtime/ticks_per_us)/1000, (avgtime/ticks_per_us)%1000);
+            uart_write_str(dbuart, tmp);
+            for (int i=0; i < 10; i++) {
+                if (i == 0) {
+                    uart_write_str(dbuart, "Individual times: ");
+                }
+                if (i == 5) {
+                    uart_write_str(dbuart, "\r\n");
+                }
+                int32_t time_us = (tickvals[i+1]-tickvals[i])/ticks_per_us;
+                sprintf(tmp, "%d.%03d ", time_us/1000, time_us%1000);
+                uart_write_str(dbuart, tmp);
+            }
         }
     }
-
+    else if (c == '7') {
+        Channel *wsch = first_websocket();
+        if (wsch != nullptr) {
+            for (int i=0; i < 10; i++) {
+                sprintf(tmp, "Current heap free %d: %u (%c)", i, xPortGetFreeHeapSize(), heap_char());
+                log_info_to(*wsch, tmp);
+            }
+            uart_write_str(dbuart, "That was `log_info_to` ten times targeting first websocket\r\n");
+        }
+    }
+    else if (c == '8') {
+        Channel *ch0 = allChannels._channelq[0];
+        if (ch0 != nullptr) {
+            tickvals[0] = tic();
+            for (int i=0; i < 10; i++) {
+                sprintf(tmp, "Current heap free %d: %u (%c)\r\n", i, xPortGetFreeHeapSize(), heap_char());
+                ch0->write(tmp, strlen(tmp));
+                tickvals[i+1] = tic();
+            }
+            uart_write_str(dbuart, "That was `channel->write()` ten times to first channel (uart 0)\r\n");
+            int32_t mintime = INT32_MAX;
+            int32_t maxtime = 0;
+            for (int i=0; i < 10; i++) {
+                if (tickvals[i+1]-tickvals[i] < mintime) {
+                    mintime = tickvals[i+1]-tickvals[i];
+                }
+                if (tickvals[i+1]-tickvals[i] > maxtime) {
+                    maxtime = tickvals[i+1]-tickvals[i];
+                }
+            }
+            int32_t avgtime = (tickvals[10]-tickvals[0])/10;
+            sprintf(tmp, "Fastest individual message: %d.%03d\r\n", (mintime/ticks_per_us)/1000, (mintime/ticks_per_us)%1000);
+            uart_write_str(dbuart, tmp);
+            sprintf(tmp, "Slowest individual message: %d.%03d\r\n", (maxtime/ticks_per_us)/1000, (maxtime/ticks_per_us)%1000);
+            uart_write_str(dbuart, tmp);
+            sprintf(tmp, "Average individual message: %d.%03d\r\n", (avgtime/ticks_per_us)/1000, (avgtime/ticks_per_us)%1000);
+            uart_write_str(dbuart, tmp);
+            for (int i=0; i < 10; i++) {
+                if (i == 0) {
+                    uart_write_str(dbuart, "Individual times: ");
+                }
+                if (i == 5) {
+                    uart_write_str(dbuart, "\r\n");
+                }
+                int32_t time_us = (tickvals[i+1]-tickvals[i])/ticks_per_us;
+                sprintf(tmp, "%d.%03d ", time_us/1000, time_us%1000);
+                uart_write_str(dbuart, tmp);
+            }
+        }
+    }
+    else if (c == '9') {
+        Channel *ch0 = &allChannels;
+        if (ch0 != nullptr) {
+            tickvals[0] = tic();
+            for (int i=0; i < 10; i++) {
+                sprintf(tmp, "Current heap free %d: %u (%c)\r\n", i, xPortGetFreeHeapSize(), heap_char());
+                ch0->write(tmp, strlen(tmp));
+                tickvals[i+1] = tic();
+            }
+            uart_write_str(dbuart, "That was `channel->write()` ten times to allChannels\r\n");
+            int32_t mintime = INT32_MAX;
+            int32_t maxtime = 0;
+            for (int i=0; i < 10; i++) {
+                if (tickvals[i+1]-tickvals[i] < mintime) {
+                    mintime = tickvals[i+1]-tickvals[i];
+                }
+                if (tickvals[i+1]-tickvals[i] > maxtime) {
+                    maxtime = tickvals[i+1]-tickvals[i];
+                }
+            }
+            int32_t avgtime = (tickvals[10]-tickvals[0])/10;
+            sprintf(tmp, "Fastest individual message: %d.%03d\r\n", (mintime/ticks_per_us)/1000, (mintime/ticks_per_us)%1000);
+            uart_write_str(dbuart, tmp);
+            sprintf(tmp, "Slowest individual message: %d.%03d\r\n", (maxtime/ticks_per_us)/1000, (maxtime/ticks_per_us)%1000);
+            uart_write_str(dbuart, tmp);
+            sprintf(tmp, "Average individual message: %d.%03d\r\n", (avgtime/ticks_per_us)/1000, (avgtime/ticks_per_us)%1000);
+            uart_write_str(dbuart, tmp);
+            for (int i=0; i < 10; i++) {
+                if (i == 0) {
+                    uart_write_str(dbuart, "Individual times: ");
+                }
+                if (i == 5) {
+                    uart_write_str(dbuart, "\r\n");
+                }
+                int32_t time_us = (tickvals[i+1]-tickvals[i])/ticks_per_us;
+                sprintf(tmp, "%d.%03d ", time_us/1000, time_us%1000);
+                uart_write_str(dbuart, tmp);
+            }
+        }
+    }
     else {
         return false;  // did not match one of the specified characters
     }
     return true;  // matched one of the specified characters
 }
 
+extern bool i2sout_interruption_report;
+
 void hearbeat_loop(void *unused) {
     bool heartbeat = true;
-    bool hbfast = false;
+    uint8_t hbspeed = 0;
     Uart *dbuart = config->_uarts[2];
 
     if (dbuart != nullptr) {
         uart_write_str(dbuart, "\r\n---- debug (o/t/m/h/x/r/q) ----\r\n");
         for (int loopct = 1; true; loopct++) {
             char c = '\0';
-            int nread = dbuart->timedReadBytes(&c, 1, hbfast ? 200 : 500);  // serves to set heartbeat cadence
+            int cycletime_ms = 500;
+            if (hbspeed == 1) {
+                cycletime_ms = 200;
+            }
+            if (hbspeed == 2) {
+                // 1/60th of a second is 16.66666 ms
+                // 1/3 of the time delay 16 ms, and 2/3 of the time delay 17 ms
+                cycletime_ms = 16 + (((loopct % 3) == 0) ? 0 : 1);
+            }
+            int nread = dbuart->timedReadBytes(&c, 1, cycletime_ms);  // serves to set heartbeat cadence
             if (heartbeat_message != nullptr) {
                 uart_write_str(dbuart, "\r\n");
                 dbuart->write((uint8_t *)heartbeat_message, strlen(heartbeat_message));
@@ -469,7 +628,7 @@ void hearbeat_loop(void *unused) {
                 }
             }
             else if (c == 'p') {
-                hbfast = !hbfast;
+                hbspeed = (hbspeed+1) % 3;
             }
             else if (c == 'q') {
                 heartbeat_ram = !heartbeat_ram;
@@ -489,6 +648,11 @@ void hearbeat_loop(void *unused) {
             }
             else {
                 heartbeat_debug(dbuart, c);
+            }
+
+            if (i2sout_interruption_report) {
+                uart_write_str(dbuart, "!");
+                i2sout_interruption_report = false;
             }
         }
     }
@@ -633,6 +797,8 @@ int32_t get_longest_poll();
 int32_t get_longest_wifi();
 void reset_longest();
 
+extern bool i2sout_interrupted;
+
 void     protocol_main_loop() {
     check_startup_state();
     start_polling();
@@ -648,6 +814,7 @@ void     protocol_main_loop() {
     // This is also where the system idles while waiting for something to do.
     // ---------------------------------------------------------------------------------
     for (;; vTaskDelay(0)) {
+        i2sout_interrupted = true;
         main_loop_last_iter = tic();
         main_loop_count++;
         if (toc_us(wd) > 5000000) {
@@ -657,6 +824,8 @@ void     protocol_main_loop() {
             tot_us = 0;
             iters = 0;
         }
+        i2sout_interrupted = true;
+
         if (activeChannel) {
             // The input polling task has collected a line of input
 #ifdef DEBUG_REPORT_ECHO_RAW_LINE_RECEIVED
@@ -672,6 +841,7 @@ void     protocol_main_loop() {
             // so it can give us another one when available
             activeChannel = nullptr;
         }
+        i2sout_interrupted = true;
 
         // Auto-cycle start any queued moves.
         protocol_auto_cycle_start();
@@ -680,6 +850,7 @@ void     protocol_main_loop() {
             stop_polling();
             return;  // Bail to main() program loop to reset system.
         }
+        i2sout_interrupted = true;
 
         // check to see if we should disable the stepper drivers
         // If idleEndTime is 0, no disable is pending.
@@ -696,6 +867,8 @@ void     protocol_main_loop() {
             idleEndTime = 0;  //
             config->_axes->set_disable(true);
         }
+        i2sout_interrupted = true;
+
         uint32_t newHeapSize = xPortGetFreeHeapSize();
         if (newHeapSize < heapLowWater) {
             heapLowWater = newHeapSize;
@@ -716,6 +889,7 @@ void     protocol_main_loop() {
 
             last_loop_warning = main_loop_count;
         }
+        i2sout_interrupted = true;
 
         int32_t longest_poll = get_longest_poll();
         int32_t longest_wifi = get_longest_wifi();
@@ -734,6 +908,7 @@ void     protocol_main_loop() {
         int32_t ld_us = toc_us(main_loop_last_iter);  // time for this iteration
         tot_us += ld_us;
         iters++;
+        i2sout_interrupted = true;
 
         while (freeze_main_task) {
             vTaskDelay(100);

@@ -476,12 +476,16 @@ static void IRAM_ATTR i2s_out_intr_handler(void* arg) {
 //
 // I2S bitstream generator task
 //
+bool i2sout_interrupted = false;
+bool i2sout_interruption_report = false;
+
 static void i2sOutTask(void* parameter) {
     lldesc_t* dma_desc;
     while (1) {
         // Wait a DMA complete event from I2S isr
         // (Block until a DMA transfer has complete)
         xQueueReceive(o_dma.queue, &dma_desc, portMAX_DELAY);
+        i2sout_interrupted = false;
         o_dma.current = (uint32_t*)(dma_desc->buf);
         // It reuses the oldest (just transferred) buffer with the name "current"
         // and fills the buffer for later DMA.
@@ -525,6 +529,9 @@ static void i2sOutTask(void* parameter) {
         I2S_OUT_PULSER_EXIT_CRITICAL();  // Unlock pulser status
 
         static UBaseType_t uxHighWaterMark = 0;
+        if (i2sout_interrupted) {
+            i2sout_interruption_report = true;
+        }
 #    ifdef DEBUG_TASK_STACK
         reportTaskStackSize(uxHighWaterMark);
 #    endif
@@ -887,7 +894,7 @@ int i2s_out_init(i2s_out_init_t& init_param) {
                             "I2SOutTask",
                             4096,
                             NULL,
-                            1,
+                            2,
                             nullptr,
                             CONFIG_ARDUINO_RUNNING_CORE  // must run the task on same core
     );

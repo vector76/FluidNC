@@ -718,9 +718,9 @@ static Error setReportInterval(const char* value, WebUI::AuthenticationLevel aut
     if (!value) {
         uint32_t actual = out.getReportInterval();
         if (actual) {
-            log_info("Channel auto report interval is " << actual << " ms");
+            log_info_to(out, "Channel auto report interval is " << actual << " ms");
         } else {
-            log_info("Channel auto reporting is off");
+            log_info_to(out, "Channel auto reporting is off");
         }
         return Error::Ok;
     }
@@ -734,9 +734,9 @@ static Error setReportInterval(const char* value, WebUI::AuthenticationLevel aut
     uint32_t actual = out.setReportInterval(intValue);
 #if 1
     if (actual) {
-        log_info("Channel auto report interval set to " << actual << " ms");
+        log_info_to(out, "Channel auto report interval set to " << actual << " ms");
     } else {
-        log_info("Channel auto reporting turned off");
+        log_info_to(out, "Channel auto reporting turned off");
     }
 #endif
 
@@ -748,7 +748,7 @@ static Error setReportInterval(const char* value, WebUI::AuthenticationLevel aut
 }
 
 static Error showHeap(const char* value, WebUI::AuthenticationLevel auth_level, Channel& out) {
-    log_info("Heap free: " << xPortGetFreeHeapSize() << " min: " << heapLowWater);
+    log_info_to(out, "Heap free: " << xPortGetFreeHeapSize() << " min: " << heapLowWater);
     return Error::Ok;
 }
 

@@ -93,7 +93,7 @@ public:
     size_t write(uint8_t data) override;
     size_t write(const uint8_t* buffer, size_t length) override;
 
-    void flushRx();
+    void flushRx() override;
 
     void notifyWco();
     void notifyNgc(CoordIndex coord);
