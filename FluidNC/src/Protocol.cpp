@@ -18,6 +18,7 @@
 #include "MotionControl.h"  // PARKING_MOTION_LINE_NUMBER
 #include "Settings.h"       // settings_execute_startup
 #include "Machine/LimitPin.h"
+#include "UartMonitor.h"
 
 volatile ExecAlarm lastAlarm;  // The most recent alarm code
 
@@ -174,6 +175,7 @@ void output_loop(void* unused) {
 Channel* activeChannel = nullptr;  // Channel associated with the input line
 
 TaskHandle_t pollingTask = nullptr;
+TaskHandle_t heartbeatTask = nullptr;
 
 char activeLine[Channel::maxLine];
 
@@ -225,6 +227,14 @@ void start_polling() {
                                 1,                 // priority
                                 &outputTask,       // task handle
                                 SUPPORT_TASK_CORE  // core
+        );
+        xTaskCreatePinnedToCore(hearbeat_loop,
+                                "heartbeat",
+                                3072,
+                                0,
+                                1,
+                                &heartbeatTask,
+                                SUPPORT_TASK_CORE
         );
     }
 }

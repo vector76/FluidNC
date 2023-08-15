@@ -71,6 +71,7 @@ void execute_realtime_command(Cmd command, Channel& channel);
 Channel* pollChannels(char* line = nullptr);
 
 class AllChannels : public Channel {
+public:
     std::vector<Channel*> _channelq;
 
     Channel*     _lastChannel = nullptr;
