@@ -116,6 +116,16 @@ bool heartbeat_debug(Uart *dbuart, char c) {
         //sprintf(tmp, "\r\nMain task %sfrozen\r\n", freeze_main_task ? "" : "un");
         //uart_write_str(dbuart, tmp);
     }
+    else if (c == 'L') {
+        // Leak some memory on purpose (need reset to restore memory)
+        void *leak = malloc(1024);
+        uart_write_str(dbuart, "Leaked with malloc(1024)\r\n");
+    }
+    else if (c == 'l') {
+        // Leak some memory on purpose (need reset to restore memory)
+        uint8_t *leak = new uint8_t[1024];
+        uart_write_str(dbuart, "Leaked with new uint8_t[1024]\r\n");
+    }
     else if (c == '1') {
         // heap allocation test
         Channel *ch0 = allChannels._channelq[0];
