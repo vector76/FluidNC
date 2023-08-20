@@ -174,7 +174,7 @@ void output_loop(void* unused) {
 
 Channel* activeChannel = nullptr;  // Channel associated with the input line
 
-TaskHandle_t pollingTask = nullptr;
+TaskHandle_t pollingTask   = nullptr;
 TaskHandle_t heartbeatTask = nullptr;
 
 char activeLine[Channel::maxLine];
@@ -228,13 +228,13 @@ void start_polling() {
                                 &outputTask,       // task handle
                                 SUPPORT_TASK_CORE  // core
         );
-        xTaskCreatePinnedToCore(hearbeat_loop,
-                                "heartbeat",
-                                3072,
-                                0,
-                                1,
-                                &heartbeatTask,
-                                SUPPORT_TASK_CORE
+        xTaskCreatePinnedToCore(hearbeat_loop,     // task
+                                "heartbeat",       // name for task
+                                3072,              // size of task stack
+                                0,                 // parameters
+                                1,                 // priority
+                                &heartbeatTask,    // task handle
+                                SUPPORT_TASK_CORE  // core
         );
     }
 }
@@ -249,9 +249,9 @@ static void check_startup_state() {}
 
 const uint32_t heapWarnThreshold = 15000;
 
-uint32_t heapLowWater = UINT_MAX;
-uint32_t heapLowWaterReported = UINT_MAX;
-int32_t heapLowWaterReportTime = 0;
+uint32_t heapLowWater           = UINT_MAX;
+uint32_t heapLowWaterReported   = UINT_MAX;
+int32_t  heapLowWaterReportTime = 0;
 void     protocol_main_loop() {
     start_polling();
 
@@ -307,14 +307,14 @@ void     protocol_main_loop() {
         if (heapLowWater < heapLowWaterReported && heapLowWater < heapWarnThreshold) {
             // typecast to uint32_t handles roll-over for this case
             uint32_t ticksSinceReported = (getCpuTicks() - heapLowWaterReportTime);
-            uint32_t tickLimit = usToCpuTicks(200000);
-            // Report only if it has been a while since the last report or if the memory has 
+            uint32_t tickLimit          = usToCpuTicks(200000);
+            // Report only if it has been a while since the last report or if the memory has
             // dropped significantly (2k bytes) since the last report.
-            // This prevents a cycle where the reporting itself consumes some heap and triggers another 
+            // This prevents a cycle where the reporting itself consumes some heap and triggers another
             // report, but the true minimum is reported eventually, and large drops are reported immediately.
             if ((heapLowWater < heapLowWaterReported - 2048) || (ticksSinceReported > tickLimit)) {
                 log_warn("Low memory: " << heapLowWater << " bytes");
-                heapLowWaterReported = heapLowWater;
+                heapLowWaterReported   = heapLowWater;
                 heapLowWaterReportTime = getCpuTicks();
             }
         }
