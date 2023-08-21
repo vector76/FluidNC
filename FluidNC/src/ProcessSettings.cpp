@@ -39,15 +39,15 @@
 static bool auth_failed(Word* w, const char* value, WebUI::AuthenticationLevel auth_level) {
     permissions_t permissions = w->getPermissions();
     switch (auth_level) {
-        case WebUI::AuthenticationLevel::LEVEL_ADMIN:  // Admin can do anything
-            return false;                              // Nothing is an Admin auth fail
-        case WebUI::AuthenticationLevel::LEVEL_GUEST:  // Guest can only access open settings
-            return permissions != WG;                  // Anything other than RG is Guest auth fail
-        case WebUI::AuthenticationLevel::LEVEL_USER:   // User is complicated...
-            if (!value) {                              // User can read anything
-                return false;                          // No read is a User auth fail
+        case WebUI::AuthenticationLevel::LEVEL_ADMIN:          // Admin can do anything
+            return false;                                      // Nothing is an Admin auth fail
+        case WebUI::AuthenticationLevel::LEVEL_GUEST:          // Guest can only access open settings
+            return permissions != WG && permissions != WG_CH;  // Anything other than RG is Guest auth fail
+        case WebUI::AuthenticationLevel::LEVEL_USER:           // User is complicated...
+            if (!value) {                                      // User can read anything
+                return false;                                  // No read is a User auth fail
             }
-            return permissions == WA;  // User cannot write WA
+            return permissions == WA || permissions == WA_CH;  // User cannot write WA
         default:
             return true;
     }
@@ -774,9 +774,9 @@ void make_user_commands() {
     new UserCommand("S", "Settings/List", list_settings, cycleOrHold);
     new UserCommand("SC", "Settings/ListChanged", list_changed_settings, cycleOrHold);
     new UserCommand("CMD", "Commands/List", list_commands, cycleOrHold);
-    new UserCommand("A", "Alarms/List", listAlarms, anyState);
-    new UserCommand("E", "Errors/List", listErrors, anyState);
-    new UserCommand("G", "GCode/Modes", report_gcode, anyState);
+    new UserCommand("A", "Alarms/List", listAlarms, anyState, WG_CH);
+    new UserCommand("E", "Errors/List", listErrors, anyState, WG_CH);
+    new UserCommand("G", "GCode/Modes", report_gcode, anyState, WG_CH);
     new UserCommand("C", "GCode/Check", toggle_check_mode, anyState);
     new UserCommand("X", "Alarm/Disable", disable_alarm_lock, anyState);
     new UserCommand("NVX", "Settings/Erase", Setting::eraseNVS, notIdleOrAlarm, WA);
@@ -797,14 +797,14 @@ void make_user_commands() {
     new UserCommand("HC", "Home/C", home_c, notIdleOrAlarm);
 
     new UserCommand("SLP", "System/Sleep", go_to_sleep, notIdleOrAlarm);
-    new UserCommand("I", "Build/Info", get_report_build_info, notIdleOrAlarm);
+    new UserCommand("I", "Build/Info", get_report_build_info, notIdleOrAlarm, WG_CH);
     new UserCommand("N", "GCode/StartupLines", show_startup_lines, notIdleOrAlarm);
     new UserCommand("RST", "Settings/Restore", restore_settings, notIdleOrAlarm, WA);
 
-    new UserCommand("Heap", "Heap/Show", showHeap, anyState);
+    new UserCommand("Heap", "Heap/Show", showHeap, anyState, WG_CH);
     new UserCommand("SS", "Startup/Show", showStartupLog, anyState);
 
-    new UserCommand("RI", "Report/Interval", setReportInterval, anyState);
+    new UserCommand("RI", "Report/Interval", setReportInterval, anyState, WG_CH);
 
     new UserCommand("30", "FakeMaxSpindleSpeed", fakeMaxSpindleSpeed, notIdleOrAlarm);
     new UserCommand("32", "FakeLaserMode", fakeLaserMode, notIdleOrAlarm);
@@ -840,6 +840,18 @@ char* normalize_key(char* start) {
     *end = '\0';
 
     return start;
+}
+
+Command* Command::findCommand(const char* key) {
+    for (Command* s : Command::List) {
+        if (strcasecmp(s->getName(), key) == 0) {
+            return s;
+        }
+        if (s->getGrblName() && strcasecmp(s->getGrblName(), key) == 0) {
+            return s;
+        }
+    }
+    return nullptr;
 }
 
 // This is the handler for all forms of settings commands,

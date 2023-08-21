@@ -70,24 +70,19 @@ bool UartChannel::realtimeOkay(char c) {
     return _lineedit->realtime(c);
 }
 
-bool UartChannel::lineComplete(char* line, char c) {
-    if (_lineedit->step(c)) {
+bool UartChannel::buildLine(char ch) {
+    // returns true if ch was accepted, false if rejected (e.g. if line complete and not accepting more characters)
+    if (_isComplete) {
+        return false;
+    }
+    if (_lineedit->step(ch)) {
         _linelen        = _lineedit->finish();
         _line[_linelen] = '\0';
-        strcpy(line, _line);
-        _linelen = 0;
-        return true;
+        //log_info_to(*this, "lineedit step indicated complete with len of " << _linelen << " and line of '" << _line << "'.");
+        _isComplete = true;
+        tryProcess();
     }
-    return false;
-}
-
-Channel* UartChannel::pollLine(char* line) {
-    // UART0 is the only Uart instance that can be a channel input device
-    // Other UART users like RS485 use it as a dumb character device
-    if (_lineedit == nullptr) {
-        return nullptr;
-    }
-    return Channel::pollLine(line);
+    return true;
 }
 
 int UartChannel::read() {

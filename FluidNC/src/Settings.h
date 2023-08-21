@@ -47,9 +47,12 @@ typedef enum : uint8_t {
 } type_t;
 
 typedef enum : uint8_t {
-    WG,  // Readable and writable as guest
-    WU,  // Readable and writable as user and admin
-    WA,  // Readable as user and admin, writable as admin
+    WG,     // Readable and writable as guest
+    WU,     // Readable and writable as user and admin
+    WA,     // Readable as user and admin, writable as admin
+    WG_CH,  // Readable and writable as guest and channel may handle it
+    WU_CH,  // Readable and writable as user and admin and channel may handle it
+    WA_CH,  // Readable as user and admin, writable as admin channel may handle it
 } permissions_t;
 
 typedef uint8_t axis_t;
@@ -79,6 +82,8 @@ public:
     // Command::List is a vector of all commands,
     // so common code can enumerate them.
     static std::vector<Command*> List;
+
+    static Command* findCommand(const char* key);
 
     ~Command() {}
     Command(const char* description, type_t type, permissions_t permissions, const char* grblName, const char* fullName, bool (*cmdChecker)());

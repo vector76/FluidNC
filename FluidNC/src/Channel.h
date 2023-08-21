@@ -30,6 +30,7 @@ public:
 protected:
     const char* _name;
     char        _line[maxLine];
+    bool        _isComplete;
     size_t      _linelen;
     bool        _addCR     = false;
     char        _lastWasCR = false;
@@ -78,9 +79,8 @@ public:
     // be a realtime character.
     virtual bool realtimeOkay(char c) { return true; }
 
-    // lineComplete() accumulates the character into the line, returning true if a line
-    // end is seen.
-    virtual bool lineComplete(char* line, char c);
+    virtual bool buildLine(char c);
+    virtual void tryProcess();
 
     virtual size_t timedReadBytes(char* buffer, size_t length, TickType_t timeout) {
         setTimeout(timeout);

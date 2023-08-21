@@ -106,7 +106,6 @@ public:
     Channel* pollLine(char* line) override;
     void     flushRx() override {}
 
-    bool   lineComplete(char*, char) override { return false; }
     size_t timedReadBytes(char* buffer, size_t length, TickType_t timeout) override { return 0; }
 
     // Configuration handlers:
