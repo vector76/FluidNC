@@ -29,7 +29,7 @@ https://github.com/vector76/FluidNC/raw/on_idle_binary/firmware.bin
 
 ### 2. At the top of every gcode file, add this:
 ```
-$/macros/on_idle=$sd/run=
+$/macros/on_idle=
 ```
 Make sure you have the `=` at the end and nothing after that.  This clears the next file in the chain (if any) so it will only go into an infinite loop when you want, and if you cancel a job it won't launch unintentionally.
 
